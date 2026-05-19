@@ -45,6 +45,9 @@ export function PreviewModal({ file, url, onClose }: PreviewModalProps) {
     ["mp3", "wav", "ogg", "m4a", "flac"].includes(ext || "");
   const isText = 
     ["txt", "md", "json", "js", "ts", "py", "rs", "go", "html", "css", "xml", "csv"].includes(ext || "");
+  const isPdf =
+    mimeType === "application/pdf" ||
+    (ext || "") === "pdf";
 
   // Escape key close listener
   useEffect(() => {
@@ -285,7 +288,17 @@ export function PreviewModal({ file, url, onClose }: PreviewModalProps) {
                 </div>
               )}
 
-              {!isImage && !isVideo && !isAudio && !isText && (
+              {isPdf && (
+                <div className="w-full max-w-5xl h-[calc(100dvh-10rem)] bg-surface-900 border border-surface-850 rounded-xl overflow-hidden shadow-2xl relative">
+                  <iframe
+                    src={`${url}#toolbar=0&navpanes=0`}
+                    className="w-full h-full border-0 rounded-xl bg-surface-900"
+                    title={file.name}
+                  />
+                </div>
+              )}
+
+              {!isImage && !isVideo && !isAudio && !isText && !isPdf && (
                 <div className="text-center">
                   <div className="w-16 h-16 mx-auto rounded-2xl bg-surface-800 flex items-center justify-center mb-4">
                     <svg className="w-8 h-8 text-surface-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
