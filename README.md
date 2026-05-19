@@ -1,4 +1,4 @@
-# 🌌 TG Cloud Drive (v2.1) — The Decentralized Browser Cloud
+# 🌌 TG Cloud Drive (v1.0) — The Decentralized Browser Cloud
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](./LICENSE)
 [![React](https://img.shields.io/badge/React-19-blue.svg?logo=react)](https://react.dev)

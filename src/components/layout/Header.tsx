@@ -79,7 +79,7 @@ export function Header({
             <h1 className="text-sm font-bold gradient-text leading-tight flex items-center gap-2">
               TG Cloud Drive
               <span className="text-[9px] font-medium bg-brand-500/10 text-brand-400 px-1.5 py-0.5 rounded-full border border-brand-500/20">
-                v2.1
+                v1.0
               </span>
             </h1>
             <p className="text-[10px] text-surface-600 leading-tight">

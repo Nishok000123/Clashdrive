@@ -5,8 +5,8 @@ Only the latest released major version of TG Cloud Drive is supported for securi
 
 | Version | Supported |
 | --- | --- |
-| 2.x | Yes |
-| < 2.0 | No |
+| 1.x | Yes |
+| < 1.0 | No |
 
 ## Reporting a Vulnerability
 We take the security of TG Cloud Drive very seriously. Because the client is decentralized and Zero-Knowledge (storing all user session hashes and decryption keys locally within the client browser's IndexedDB and your private metadata DB), vulnerabilities are typically confined to:
