@@ -18,14 +18,14 @@ const LS_ACTIVE_ACCOUNT = "tgcd_active_account";
 
 function readAccounts(): SavedAccount[] {
   try {
-    return JSON.parse(sessionStorage.getItem(LS_ACCOUNTS) || "[]").slice(0, 3);
+    return JSON.parse(localStorage.getItem(LS_ACCOUNTS) || "[]").slice(0, 3);
   } catch {
     return [];
   }
 }
 
 function writeAccounts(accounts: SavedAccount[]) {
-  sessionStorage.setItem(LS_ACCOUNTS, JSON.stringify(accounts.slice(0, 3)));
+  localStorage.setItem(LS_ACCOUNTS, JSON.stringify(accounts.slice(0, 3)));
 }
 
 function profileName(profile: UserProfile) {
@@ -39,7 +39,7 @@ function profileName(profile: UserProfile) {
 export function useAuth() {
   const [state, setState] = useState<AuthState>({
     step: "phone",
-    phone: sessionStorage.getItem(LS_PHONE) || "",
+    phone: localStorage.getItem(LS_PHONE) || "",
     loading: false,
     error: null,
   });
@@ -47,7 +47,7 @@ export function useAuth() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [accounts, setAccounts] = useState<SavedAccount[]>(() => readAccounts());
   const [activeAccountId, setActiveAccountId] = useState<string | null>(
-    () => sessionStorage.getItem(LS_ACTIVE_ACCOUNT)
+    () => localStorage.getItem(LS_ACTIVE_ACCOUNT)
   );
   const clientRef = useRef<TelegramClient | null>(null);
   const phoneCodeResolve = useRef<((code: string) => void) | null>(null);
@@ -93,7 +93,7 @@ export function useAuth() {
       ].slice(0, 3);
 
       writeAccounts(next);
-      sessionStorage.setItem(LS_ACTIVE_ACCOUNT, saved.userId);
+      localStorage.setItem(LS_ACTIVE_ACCOUNT, saved.userId);
       setAccounts(next);
       setActiveAccountId(saved.userId);
       await saveCloudAccounts(next);
@@ -122,7 +122,7 @@ export function useAuth() {
 
     try {
       const client = createClientFromSession(
-        preferred?.session ?? sessionStorage.getItem(LS_SESSION) ?? ""
+        preferred?.session ?? localStorage.getItem(LS_SESSION) ?? ""
       );
       clientRef.current = client;
       setClient(client);
@@ -155,7 +155,7 @@ export function useAuth() {
       }
 
       setState((s) => ({ ...s, loading: true, error: null, phone }));
-      sessionStorage.setItem(LS_PHONE, phone);
+      localStorage.setItem(LS_PHONE, phone);
 
       const client = new TelegramClient(new StringSession(""), API_ID, API_HASH, {
         connectionRetries: 5,
@@ -260,12 +260,12 @@ export function useAuth() {
   );
 
   const logout = useCallback(async () => {
-    const activeId = sessionStorage.getItem(LS_ACTIVE_ACCOUNT);
+    const activeId = localStorage.getItem(LS_ACTIVE_ACCOUNT);
     await destroyClient();
-    sessionStorage.removeItem(LS_PHONE);
-    sessionStorage.removeItem("tgcd_drive");
-    sessionStorage.removeItem(LS_ACTIVE_ACCOUNT);
-    sessionStorage.removeItem(LS_SESSION);
+    localStorage.removeItem(LS_PHONE);
+    localStorage.removeItem("tgcd_drive");
+    localStorage.removeItem(LS_ACTIVE_ACCOUNT);
+    localStorage.removeItem(LS_SESSION);
 
     if (activeId) {
       const next = readAccounts().filter((account) => account.userId !== activeId);
@@ -273,7 +273,7 @@ export function useAuth() {
       setAccounts(next);
       await saveCloudAccounts(next);
     } else {
-      sessionStorage.removeItem(LS_ACCOUNTS);
+      localStorage.removeItem(LS_ACCOUNTS);
       setAccounts([]);
     }
 
