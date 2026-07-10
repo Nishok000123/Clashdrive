@@ -26,7 +26,7 @@ export function getClient(): TelegramClient {
     useWSS: true,
     autoReconnect: true,
     floodSleepThreshold: 300,
-    maxConcurrentDownloads: 32,
+    maxConcurrentDownloads: 128,
   });
 
   return _client;
@@ -38,7 +38,7 @@ export function createClientFromSession(sessionString = ""): TelegramClient {
     useWSS: true,
     autoReconnect: true,
     floodSleepThreshold: 300,
-    maxConcurrentDownloads: 32,
+    maxConcurrentDownloads: 128,
   });
 }
 

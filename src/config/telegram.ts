@@ -14,7 +14,7 @@ export const DRIVE_SIGNATURE = "#TgCloudDrive_v1";
 /**
  * Default supergroup title when auto-creating.
  */
-export const DEFAULT_DRIVE_TITLE = "TG Cloud Drive";
+export const DEFAULT_DRIVE_TITLE = "Clash Drive";
 
 /**
  * Chunk size for file splitting (50 MB).
@@ -24,7 +24,7 @@ export const CHUNK_SIZE = 50 * 1024 * 1024;
 /**
  * Concurrent upload workers — stay conservative to avoid FloodWait.
  */
-export const UPLOAD_WORKERS = 6;
+export const UPLOAD_WORKERS = 8;
 
 /**
  * localStorage keys

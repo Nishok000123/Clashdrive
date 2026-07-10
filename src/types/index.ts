@@ -38,8 +38,17 @@ export interface UploadProgress {
   uploadedChunks: number;
   totalBytes: number;
   uploadedBytes: number;
+  speedBps?: number;
   status: "preparing" | "uploading" | "finalizing" | "done" | "error";
   error?: string;
+}
+
+export interface DownloadProgress {
+  name: string;
+  progress: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  speedBps: number;
 }
 
 export type AuthStep = "phone" | "otp" | "password" | "done";

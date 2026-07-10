@@ -33,18 +33,22 @@ async function verifyDriveGroup(
 export async function scanForDriveGroup(
   client: TelegramClient
 ): Promise<DriveConfig | null> {
+  const me = await client.getMe();
+  const userId = me ? me.id.toString() : "default";
+  const userDriveKey = `${LS_DRIVE}_${userId}`;
+
   // Check localStorage first
-  const cached = localStorage.getItem(LS_DRIVE);
+  const cached = localStorage.getItem(userDriveKey);
   if (cached) {
     try {
       const config = JSON.parse(cached) as DriveConfig;
       if (config.accessHash) {
         const verified = await verifyDriveGroup(client, config);
         if (verified) return verified;
-        localStorage.removeItem(LS_DRIVE);
+        localStorage.removeItem(userDriveKey);
       }
     } catch {
-      localStorage.removeItem(LS_DRIVE);
+      localStorage.removeItem(userDriveKey);
     }
   }
 
@@ -70,7 +74,7 @@ export async function scanForDriveGroup(
           chatTitle: channel.title,
           accessHash: channel.accessHash ? channel.accessHash.toString() : "0",
         };
-        localStorage.setItem(LS_DRIVE, JSON.stringify(config));
+        localStorage.setItem(userDriveKey, JSON.stringify(config));
         return config;
       }
     } catch {
@@ -88,7 +92,6 @@ export async function scanForDriveGroup(
 export async function createDriveGroup(
   client: TelegramClient
 ): Promise<DriveConfig> {
-  // @ts-ignore — GramJS accepts `forum` at runtime to enable topics
   const result = await client.invoke(
     new Api.channels.CreateChannel({
       title: DEFAULT_DRIVE_TITLE,
@@ -106,7 +109,11 @@ export async function createDriveGroup(
     chatTitle: channel.title,
     accessHash: channel.accessHash ? channel.accessHash.toString() : "0",
   };
-  localStorage.setItem(LS_DRIVE, JSON.stringify(config));
+
+  const me = await client.getMe();
+  const userId = me ? me.id.toString() : "default";
+  const userDriveKey = `${LS_DRIVE}_${userId}`;
+  localStorage.setItem(userDriveKey, JSON.stringify(config));
 
   return config;
 }

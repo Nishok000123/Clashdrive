@@ -1,14 +1,21 @@
 import { TelegramClient, Api } from "telegram";
-import { CHUNK_SIZE } from "../config/telegram";
+import { CHUNK_SIZE, UPLOAD_WORKERS } from "../config/telegram";
 import { buildManifest } from "./manifest";
 import type { UploadProgress, DriveConfig } from "../types";
 import bigInt from "big-integer";
 
-async function runWithConcurrency<T>(tasks: (() => Promise<T>)[], concurrency: number): Promise<T[]> {
+async function runWithConcurrency<T>(
+  tasks: (() => Promise<T>)[],
+  concurrency: number,
+  signal?: AbortSignal
+): Promise<T[]> {
   const results: T[] = [];
   let index = 0;
   async function worker() {
     while (index < tasks.length) {
+      if (signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
       const i = index++;
       results[i] = await tasks[i]();
     }
@@ -16,6 +23,44 @@ async function runWithConcurrency<T>(tasks: (() => Promise<T>)[], concurrency: n
   const workers = Array.from({ length: Math.min(concurrency, tasks.length) }).map(() => worker());
   await Promise.all(workers);
   return results;
+}
+
+function getErrorMessage(err: unknown) {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "object" && err && "message" in err) {
+    const message = (err as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return "Upload failed";
+}
+
+function getFloodWaitSeconds(err: unknown) {
+  if (typeof err !== "object" || !err || !("errorMessage" in err)) return null;
+  const errorMessage = (err as { errorMessage?: unknown }).errorMessage;
+  if (typeof errorMessage !== "string" || !errorMessage.startsWith("FLOOD_WAIT_")) return null;
+  return parseInt(errorMessage.split("_").pop() || "", 10) || 30;
+}
+
+/**
+ * Upload a single blob chunk as a document to the topic.
+ */
+function getDynamicUploadConcurrency() {
+  const cores = navigator.hardwareConcurrency || 4;
+  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+
+  if (isMobile) {
+    if (cores <= 2) {
+      return { segments: 1, workers: 4 };
+    }
+    return { segments: 2, workers: Math.max(6, UPLOAD_WORKERS) };
+  }
+  if (cores >= 12) {
+    return { segments: 5, workers: 12 };
+  }
+  if (cores >= 8) {
+    return { segments: 4, workers: 10 };
+  }
+  return { segments: 3, workers: UPLOAD_WORKERS };
 }
 
 /**
@@ -28,6 +73,7 @@ async function uploadChunk(
   blob: Blob,
   partIndex: number,
   fileName: string,
+  workersLimit: number,
   onChunkProgress?: (progress: number) => void
 ): Promise<number> {
   const fileToUpload = new File(
@@ -35,7 +81,7 @@ async function uploadChunk(
     `${fileName}.part${String(partIndex).padStart(4, "0")}`
   );
 
-  const idealWorkers = Math.min(16, Math.max(6, Math.ceil(blob.size / (1024 * 1024 * 1.5))));
+  const idealWorkers = Math.min(workersLimit, Math.max(6, Math.ceil(blob.size / (1024 * 1024 * 1.5))));
 
   const uploaded = await client.uploadFile({
     file: fileToUpload,
@@ -45,7 +91,6 @@ async function uploadChunk(
     },
   });
 
-  // @ts-ignore — replyTo with InputReplyToMessage works at runtime in GramJS
   const result = await client.invoke(
     new Api.messages.SendMedia({
       peer,
@@ -87,7 +132,8 @@ export async function uploadFile(
   topicId: number,
   file: File,
   onProgress?: (p: UploadProgress) => void,
-  fileId?: string
+  fileId?: string,
+  signal?: AbortSignal
 ): Promise<void> {
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
   const finalFileId = fileId || `${file.name}-${Date.now()}`;
@@ -98,16 +144,26 @@ export async function uploadFile(
   const chunkProgress = new Float64Array(totalChunks);
   let currentStatus: UploadProgress["status"] = "preparing";
   let currentError: string | undefined;
+  const startedAt = performance.now();
+  
+  // Track uploaded message IDs for cleanup on cancellation
+  const uploadedMsgIds: number[] = [];
 
   const emitProgress = () => {
     const totalUploadedBytes = chunkProgress.reduce((a, b) => a + b, 0);
+    const elapsedSeconds = Math.max((performance.now() - startedAt) / 1000, 0.001);
+    const uploadedChunks = Array.from(chunkProgress).filter((bytes, index) => {
+      const chunkSize = Math.min(CHUNK_SIZE, file.size - index * CHUNK_SIZE);
+      return chunkSize > 0 && bytes >= chunkSize;
+    }).length;
     onProgress?.({
       fileId: finalFileId,
       fileName: file.name,
       totalChunks,
-      uploadedChunks: Math.floor(totalUploadedBytes / CHUNK_SIZE),
+      uploadedChunks,
       totalBytes: file.size,
       uploadedBytes: Math.min(totalUploadedBytes, file.size),
+      speedBps: Math.min(totalUploadedBytes, file.size) / elapsedSeconds,
       status: currentStatus,
       error: currentError,
     });
@@ -117,16 +173,27 @@ export async function uploadFile(
   // even when GramJS batches its internal progress callbacks
   const progressInterval = setInterval(emitProgress, 100);
 
+  const { segments, workers } = getDynamicUploadConcurrency();
+
   try {
+    if (signal?.aborted) {
+      throw new DOMException("Upload cancelled", "AbortError");
+    }
     emitProgress();
 
     const tasks = Array.from({ length: totalChunks }).map((_, i) => async () => {
+      if (signal?.aborted) {
+        throw new DOMException("Upload cancelled", "AbortError");
+      }
       const start = i * CHUNK_SIZE;
       const end = Math.min(start + CHUNK_SIZE, file.size);
       const blob = file.slice(start, end);
 
       let attempts = 0;
-      while (true) {
+      while (attempts < 3) {
+        if (signal?.aborted) {
+          throw new DOMException("Upload cancelled", "AbortError");
+        }
         try {
           currentStatus = "uploading";
           const msgId = await uploadChunk(
@@ -136,39 +203,59 @@ export async function uploadFile(
             blob,
             i,
             file.name,
+            workers,
             (progress) => {
               chunkProgress[i] = progress * blob.size;
             }
           );
+          // Register message ID for potential cleanup
+          uploadedMsgIds.push(msgId);
           // Mark chunk fully done
           chunkProgress[i] = blob.size;
           return { index: i, msgId };
-        } catch (err: any) {
-          if (err?.errorMessage?.startsWith("FLOOD_WAIT_")) {
-            const wait = parseInt(err.errorMessage.split("_").pop()!, 10) || 30;
+        } catch (err: unknown) {
+          if (signal?.aborted) {
+            throw new DOMException("Upload cancelled", "AbortError");
+          }
+          const floodWaitSeconds = getFloodWaitSeconds(err);
+          if (floodWaitSeconds !== null) {
+            const wait = floodWaitSeconds;
             console.warn(`FloodWait: sleeping ${wait}s then retrying chunk ${i}`);
             await new Promise((r) => setTimeout(r, wait * 1000));
             attempts++;
             continue;
           }
+          attempts++;
+          if (attempts < 3) {
+            console.warn(`Upload chunk ${i} failed, retrying...`, err);
+            await new Promise((r) => setTimeout(r, 1000 * attempts));
+            continue;
+          }
           currentStatus = "error";
-          currentError = err.message;
+          currentError = getErrorMessage(err);
           emitProgress();
           throw err;
         }
       }
+      currentStatus = "error";
+      currentError = `Failed to upload chunk ${i}`;
+      emitProgress();
+      throw new Error(`Failed to upload chunk ${i}`);
     });
 
-    const results = await runWithConcurrency(tasks, 4);
+    const results = await runWithConcurrency(tasks, segments, signal);
     results.sort((a, b) => a.index - b.index);
     const chunkMsgIds = results.map((r) => r.msgId);
+
+    if (signal?.aborted) {
+      throw new DOMException("Upload cancelled", "AbortError");
+    }
 
     // Send the manifest message
     currentStatus = "finalizing";
     emitProgress();
     const manifestJson = buildManifest(file.name, file.size, chunkMsgIds);
 
-    // @ts-ignore — replyTo with InputReplyToMessage works at runtime in GramJS
     await client.invoke(
       new Api.messages.SendMessage({
         peer,
@@ -180,6 +267,32 @@ export async function uploadFile(
 
     currentStatus = "done";
     emitProgress();
+  } catch (err: unknown) {
+    const isAbort =
+      signal?.aborted ||
+      (err instanceof DOMException && err.name === "AbortError") ||
+      (err instanceof Error && err.message === "Upload cancelled");
+    if (isAbort) {
+      currentStatus = "error";
+      currentError = "Upload cancelled";
+      emitProgress();
+    }
+
+    // Clean up uploaded orphaned chunks from Telegram
+    if (uploadedMsgIds.length > 0) {
+      try {
+        await client.invoke(
+          new Api.channels.DeleteMessages({
+            channel: peer,
+            id: uploadedMsgIds,
+          })
+        );
+      } catch (deleteErr) {
+        console.warn("Failed to delete orphaned chunks after cancellation:", deleteErr);
+      }
+    }
+
+    throw err;
   } finally {
     clearInterval(progressInterval);
   }

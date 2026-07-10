@@ -10,7 +10,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.52.0",
     "big-integer": "^1.6.52",
     "buffer": "^6.0.3",
     "events": "^3.3.0",

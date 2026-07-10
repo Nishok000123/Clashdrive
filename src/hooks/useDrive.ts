@@ -27,7 +27,19 @@ export function useDrive() {
     setDriveConfig(config);
     setSyncStatus("Loading folders...");
 
-    const folders = await getTopics(client, config);
+    let folders = await getTopics(client, config);
+
+    const defaultTitles = ["Videos", "Audio", "Photos", "Documents"];
+    for (const title of defaultTitles) {
+      if (!folders.some((f) => f.title.toLowerCase() === title.toLowerCase())) {
+        setSyncStatus(`Initializing ${title} folder...`);
+        const topic = await createTopic(client, config, title);
+        if (topic) {
+          folders.push(topic);
+        }
+      }
+    }
+
     setTopics(folders);
     topicsCache.current.set(config.chatId, folders);
 

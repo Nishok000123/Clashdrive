@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState, useRef } from "react";
 
 interface ModalProps {
   open: boolean;
@@ -8,9 +8,12 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, children }: ModalProps) {
+  const [closing, setClosing] = useState(false);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") handleClose();
     };
     if (open) {
       document.addEventListener("keydown", handleEsc);
@@ -22,20 +25,43 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
     };
   }, [open, onClose]);
 
-  if (!open) return null;
+  // Focus trap
+  useEffect(() => {
+    if (!open || !modalRef.current) return;
+    const focusable = modalRef.current.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length > 0) focusable[0].focus();
+  }, [open]);
+
+  const handleClose = () => {
+    setClosing(true);
+    setTimeout(() => {
+      setClosing(false);
+      onClose();
+    }, 250);
+  };
+
+  if (!open && !closing) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={onClose}
+        className={`absolute inset-0 bg-black/60 dark:bg-black/80 ${closing ? "animate-backdrop-exit" : "animate-backdrop-enter"}`}
+        style={{ backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}
+        onClick={handleClose}
       />
-      <div className="relative glass rounded-2xl p-6 w-full max-w-md mx-4 animate-slide-up glow-brand">
-        <div className="flex items-center justify-between mb-5">
-          <h3 className="text-lg font-semibold text-surface-900">{title}</h3>
+      {/* Panel */}
+      <div
+        ref={modalRef}
+        className={`relative glass rounded-3xl p-6 sm:p-7 w-full max-w-md mx-auto border border-surface-300/40 dark:border-surface-300/10 shadow-2xl glow-brand ${closing ? "animate-spring-out" : "animate-spring-in"}`}
+      >
+        <div className="flex items-center justify-between mb-5 select-none">
+          <h3 className="text-base sm:text-lg font-bold text-surface-900 tracking-tight">{title}</h3>
           <button
-            onClick={onClose}
-            className="text-surface-600 hover:text-surface-900 transition-colors p-1 rounded-lg hover:bg-surface-300"
+            onClick={handleClose}
+            className="text-surface-500 hover:text-surface-900 dark:hover:text-surface-800 transition-all p-1.5 rounded-xl hover:bg-surface-200/80 dark:hover:bg-surface-300/10 cursor-pointer active:scale-90"
           >
             <svg
               className="w-5 h-5"
@@ -52,7 +78,9 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
             </svg>
           </button>
         </div>
-        {children}
+        <div className="space-y-4">
+          {children}
+        </div>
       </div>
     </div>
   );

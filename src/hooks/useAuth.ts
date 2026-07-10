@@ -36,6 +36,15 @@ function profileName(profile: UserProfile) {
   );
 }
 
+function getErrorMessage(err: unknown) {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "object" && err && "message" in err) {
+    const message = (err as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return "Something went wrong";
+}
+
 export function useAuth() {
   const [state, setState] = useState<AuthState>({
     step: "phone",
@@ -147,19 +156,22 @@ export function useAuth() {
       localStorage.setItem(LS_PHONE, phone);
 
       const client = new TelegramClient(new StringSession(""), API_ID, API_HASH, {
-        connectionRetries: 5,
+        connectionRetries: 10,
         useWSS: true,
+        autoReconnect: true,
+        floodSleepThreshold: 300,
+        maxConcurrentDownloads: 128,
       });
       clientRef.current = client;
       setClient(client);
 
       try {
         await client.connect();
-      } catch (err: any) {
+      } catch (err: unknown) {
         setState((s) => ({
           ...s,
           loading: false,
-          error: `Connection failed: ${err.message}`,
+          error: `Connection failed: ${getErrorMessage(err)}`,
         }));
         return;
       }
@@ -192,7 +204,7 @@ export function useAuth() {
           setState((s) => ({ ...s, step: "done", loading: false }));
         })
         .catch((err) => {
-          setState((s) => ({ ...s, loading: false, error: err.message }));
+          setState((s) => ({ ...s, loading: false, error: getErrorMessage(err) }));
         });
     },
     [extractProfile, rememberAccount]
@@ -237,12 +249,12 @@ export function useAuth() {
         setUserProfile(profile);
         setConnected(true);
         setState((s) => ({ ...s, step: "done", loading: false }));
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.warn("Failed to switch account:", err);
         // Force authentication flow for this account
         setConnected(false);
         setUserProfile(null);
-        setState({ step: "phone", phone: "", loading: false, error: err.message });
+        setState({ step: "phone", phone: "", loading: false, error: getErrorMessage(err) });
       }
     },
     [activeAccountId, extractProfile, rememberAccount]

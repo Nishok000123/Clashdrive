@@ -16,7 +16,7 @@ self.addEventListener('fetch', (event) => {
 async function handleStream(request) {
   const url = new URL(request.url);
   const fileId = decodeURIComponent(url.pathname.split('/stream/')[1]);
-  const rangeHeader = request.headers.get('Range') || 'bytes=0-';
+  const rangeHeader = request.headers.get('Range');
 
   let clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
   let matchAttempts = 0;
@@ -29,13 +29,20 @@ async function handleStream(request) {
     return new Response("No active window after SW wakeup", { status: 500 });
   }
   
-  const client = clients[0]; // Route to the active window
+  // Route to the active/visible window client if possible to avoid dead/unloading frames
+  const client = clients.find(c => c.visibilityState === 'visible') || clients[0];
 
   return new Promise((resolve) => {
     const messageChannel = new MessageChannel();
     
     let controllerRef = null;
     let resolved = false;
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        resolve(new Response("Stream timed out", { status: 504 }));
+      }
+    }, 15000);
 
     const stream = new ReadableStream({
       start(controller) {
@@ -53,15 +60,21 @@ async function handleStream(request) {
       if (data.type === 'HEADER') {
         if (!resolved) {
           resolved = true;
+          clearTimeout(timeout);
+          const status = data.status || 206;
+          const contentLength = data.contentLength ?? Math.max(0, data.end - data.start + 1);
+          const headers = {
+            'Accept-Ranges': 'bytes',
+            'Content-Length': contentLength.toString(),
+            'Content-Type': data.mimeType || 'application/octet-stream',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+          };
+          if (status === 206) {
+            headers['Content-Range'] = `bytes ${data.start}-${data.end}/${data.totalSize}`;
+          }
           const response = new Response(stream, {
-            status: 206,
-            headers: {
-              'Content-Range': `bytes ${data.start}-${data.end}/${data.totalSize}`,
-              'Accept-Ranges': 'bytes',
-              'Content-Length': (data.end - data.start + 1).toString(),
-              'Content-Type': data.mimeType || 'application/octet-stream',
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-            }
+            status,
+            headers
           });
           resolve(response);
         }
@@ -80,7 +93,8 @@ async function handleStream(request) {
         }
         if (!resolved) {
           resolved = true;
-          resolve(new Response(data.error, { status: 500 }));
+          clearTimeout(timeout);
+          resolve(new Response(data.error, { status: data.status || 500 }));
         }
       }
     };

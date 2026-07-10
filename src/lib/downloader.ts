@@ -1,8 +1,21 @@
 import { TelegramClient, Api } from "telegram";
+import type { DownloadMediaInterface, IterDownloadFunction } from "telegram/client/downloads";
 import type { ChunkManifest, DriveFile, DriveConfig } from "../types";
 import { buildManifest, parseManifest } from "./manifest";
 import bigInt from "big-integer";
 import { CHUNK_SIZE } from "../config/telegram";
+
+// Module-level cache for message objects to avoid redundant Telegram API round-trips
+const messageCache = new Map<number, Api.Message>();
+
+function getErrorMessage(err: unknown) {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "object" && err && "message" in err) {
+    const message = (err as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return "Unknown error";
+}
 
 function getMessageDocumentInfo(message: Api.Message | undefined): {
   mimeType?: string;
@@ -22,10 +35,12 @@ function getMessageDocumentInfo(message: Api.Message | undefined): {
   };
 }
 
-function mimeTypeFromName(fileName: string): string {
+export function mimeTypeFromName(fileName: string): string {
   const ext = fileName.split(".").pop()?.toLowerCase();
   if (["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext || "")) {
-    return `image/${ext === "jpg" ? "jpeg" : ext}`;
+    if (ext === "jpg") return "image/jpeg";
+    if (ext === "svg") return "image/svg+xml";
+    return `image/${ext}`;
   }
   if (["mp4", "webm", "ogg", "mov"].includes(ext || "")) {
     return ext === "mov" ? "video/quicktime" : `video/${ext}`;
@@ -33,6 +48,25 @@ function mimeTypeFromName(fileName: string): string {
   if (["mp3", "wav", "m4a", "flac", "ogg"].includes(ext || "")) {
     return `audio/${ext === "mp3" ? "mpeg" : ext}`;
   }
+  const map: Record<string, string> = {
+    pdf: "application/pdf",
+    txt: "text/plain; charset=utf-8",
+    md: "text/markdown; charset=utf-8",
+    json: "application/json; charset=utf-8",
+    js: "text/javascript; charset=utf-8",
+    ts: "text/typescript; charset=utf-8",
+    py: "text/x-python; charset=utf-8",
+    rs: "text/plain; charset=utf-8",
+    go: "text/plain; charset=utf-8",
+    html: "text/html; charset=utf-8",
+    css: "text/css; charset=utf-8",
+    xml: "application/xml; charset=utf-8",
+    csv: "text/csv; charset=utf-8",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    xls: "application/vnd.ms-excel",
+  };
+  if (ext && map[ext]) return map[ext];
   return "application/octet-stream";
 }
 
@@ -65,6 +99,97 @@ export function normalizeRenamedFileName(file: DriveFile, name: string): string 
   return `${baseNameWithoutExtension(trimmed).trim() || "Untitled"}${ext}`;
 }
 
+
+/**
+ * Pre-fetch all chunk messages for a file to warm the message cache.
+ * Avoids latency spikes during video seek requests.
+ */
+export async function preFetchMessages(
+  client: TelegramClient,
+  config: DriveConfig,
+  manifest: ChunkManifest
+): Promise<void> {
+  const peer = new Api.InputPeerChannel({
+    channelId: bigInt(config.chatId),
+    accessHash: bigInt(config.accessHash),
+  });
+  const missingIds = manifest.chunks.filter((id) => !messageCache.has(id));
+  if (missingIds.length > 0) {
+    try {
+      const batchSize = 100;
+      for (let i = 0; i < missingIds.length; i += batchSize) {
+        const messages = await client.getMessages(peer, { ids: missingIds.slice(i, i + batchSize) });
+        for (const msg of messages) {
+          if (msg && msg.className === "Message") {
+            messageCache.set(msg.id, msg as Api.Message);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Pre-fetch failed:", err);
+    }
+  }
+}
+
+/**
+ * Memory cache for active preview chunks: fileId -> Map<chunkIndex, Uint8Array>
+ */
+export const previewChunkCache = new Map<string, Map<number, Uint8Array>>();
+
+/**
+ * Downloads a single file chunk and caches it in memory for instant playback.
+ */
+export async function downloadChunkToCache(
+  client: TelegramClient,
+  config: DriveConfig,
+  fileId: string,
+  manifest: ChunkManifest,
+  chunkIndex: number
+): Promise<Uint8Array> {
+  let cached = previewChunkCache.get(fileId);
+  if (!cached) {
+    cached = new Map<number, Uint8Array>();
+    previewChunkCache.set(fileId, cached);
+  }
+  if (cached.has(chunkIndex)) {
+    return cached.get(chunkIndex)!;
+  }
+
+  const msgId = manifest.chunks[chunkIndex];
+  const peer = new Api.InputPeerChannel({
+    channelId: bigInt(config.chatId),
+    accessHash: bigInt(config.accessHash),
+  });
+
+  let message = messageCache.get(msgId);
+  if (!message) {
+    const messages = await client.getMessages(peer, { ids: [msgId] });
+    if (!messages.length || !messages[0] || messages[0].className !== "Message") {
+      throw new Error(`Message not found for chunk ${chunkIndex}`);
+    }
+    message = messages[0] as Api.Message;
+    messageCache.set(msgId, message);
+  }
+
+  let attempts = 0;
+  while (attempts < 3) {
+    try {
+      const buffer = (await client.downloadMedia(message)) as Buffer | undefined;
+
+      if (buffer && buffer.length > 0) {
+        const arr = new Uint8Array(buffer);
+        cached.set(chunkIndex, arr);
+        return arr;
+      }
+    } catch (e) {
+      console.warn(`Chunk ${chunkIndex} download failed, retrying...`, e);
+    }
+    attempts++;
+    await new Promise((r) => setTimeout(r, 1000 * attempts));
+  }
+  throw new Error(`Failed to download chunk ${chunkIndex}`);
+}
+
 export async function handleStreamRequest(
   client: TelegramClient,
   config: DriveConfig,
@@ -75,112 +200,212 @@ export async function handleStreamRequest(
   const { fileId, range } = event.data;
   const port = event.ports[0];
 
+  if (!port) return;
+
   const file = files.find((f) => f.id.toString() === fileId);
   if (!file) {
-    port.postMessage({ error: "File not found" });
+    port.postMessage({ type: "ERROR", error: "File not found" });
     return;
   }
 
-  let start = 0;
-  let end = file.size - 1;
-  if (range) {
-    const parts = range.replace(/bytes=/, "").split("-");
-    if (parts[0]) start = parseInt(parts[0], 10);
-    if (parts[1]) end = Math.min(parseInt(parts[1], 10), file.size - 1);
-  }
-
-  // The browser usually requests large ranges, we satisfy up to the end of the current chunk
-  // so we don't have to stitch multiple chunks together in one response.
-  const chunkIndex = Math.floor(start / CHUNK_SIZE);
-  const chunkStart = chunkIndex * CHUNK_SIZE;
-  const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, file.size) - 1;
-  
-  end = Math.min(end, chunkEnd);
-  const limit = end - start + 1;
-  const offsetInChunk = start - chunkStart;
-  
-  const msgId = file.manifest.chunks[chunkIndex];
-  
-  try {
-    const messages = await client.getMessages(
-      new Api.InputPeerChannel({ channelId: bigInt(config.chatId), accessHash: bigInt(config.accessHash) }),
-      { ids: [msgId] }
-    );
-    if (!messages.length || !messages[0]) {
-      throw new Error("Message not found");
-    }
-
-    const alignedOffset = Math.floor(offsetInChunk / 4096) * 4096;
-    const unalignedPrefix = offsetInChunk - alignedOffset;
-    
-    const docInfo = getMessageDocumentInfo(messages[0] as Api.Message);
-    const type =
-      file.mimeType ||
-      docInfo.mimeType ||
-      mimeTypeFromName(docInfo.fileName || file.chunkFileName || file.name);
-
-    let aborted = false;
-    port.onmessage = (e) => {
-      if (e.data?.type === "ABORT") {
-        aborted = true;
-      }
-    };
-
-    // Send HEADER first
+  if (file.size <= 0) {
     port.postMessage({
       type: "HEADER",
+      status: 200,
+      start: 0,
+      end: -1,
+      totalSize: 0,
+      contentLength: 0,
+      mimeType: file.mimeType || mimeTypeFromName(file.name),
+    });
+    port.postMessage({ type: "END" });
+    return;
+  }
+
+  // The browser usually requests large ranges. Satisfy in 4MB steps so the player
+  // starts immediately without waiting on a whole 50MB Telegram part.
+  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+  const STREAM_STEP = (isMobile ? 8 : 24) * 1024 * 1024;
+  const STREAM_REQUEST_SIZE = (isMobile ? 1024 : 2048) * 1024;
+
+  const hasRange = typeof range === "string" && range.startsWith("bytes=");
+  let start = 0;
+  let requestedEnd = file.size - 1;
+
+  if (hasRange) {
+    const firstRange = range.replace(/bytes=/, "").split(",")[0].trim();
+    const [startPart, endPart] = firstRange.split("-");
+
+    if (!startPart && endPart) {
+      const suffixLength = parseInt(endPart, 10);
+      if (!Number.isNaN(suffixLength)) {
+        start = Math.max(file.size - suffixLength, 0);
+      }
+    } else {
+      const parsedStart = parseInt(startPart || "0", 10);
+      if (!Number.isNaN(parsedStart)) {
+        start = parsedStart;
+      }
+      if (endPart) {
+        const parsedEnd = parseInt(endPart, 10);
+        if (!Number.isNaN(parsedEnd)) {
+          requestedEnd = parsedEnd;
+        }
+      }
+    }
+  }
+
+  start = Math.max(0, Math.min(start, file.size - 1));
+  requestedEnd = Math.max(start, Math.min(requestedEnd, file.size - 1));
+  const end = hasRange
+    ? Math.min(requestedEnd, start + STREAM_STEP - 1)
+    : requestedEnd;
+  const contentLength = end - start + 1;
+  const peer = new Api.InputPeerChannel({
+    channelId: bigInt(config.chatId),
+    accessHash: bigInt(config.accessHash),
+  });
+  let mimeType = file.mimeType || mimeTypeFromName(file.name);
+  if (mimeType === "application/octet-stream") {
+    mimeType = mimeTypeFromName(file.name);
+  }
+
+  let aborted = false;
+  port.onmessage = (e) => {
+    if (e.data?.type === "ABORT") {
+      aborted = true;
+    }
+  };
+
+  const sendBytes = (bytes: Uint8Array) => {
+    if (aborted || bytes.length === 0) return;
+    const copy = new Uint8Array(bytes.length);
+    copy.set(bytes);
+    port.postMessage({ type: "CHUNK", chunk: copy.buffer }, [copy.buffer]);
+  };
+
+  const getChunkMessage = async (chunkIndex: number) => {
+    const msgId = file.manifest.chunks[chunkIndex];
+    if (!msgId) {
+      throw new Error(`Missing manifest chunk ${chunkIndex}`);
+    }
+
+    let message = messageCache.get(msgId);
+    if (message) return message;
+
+    const messages = await client.getMessages(peer, { ids: [msgId] });
+    if (!messages.length || !messages[0] || messages[0].className !== "Message") {
+      throw new Error(`Message not found for chunk ${chunkIndex}`);
+    }
+    message = messages[0] as Api.Message;
+    messageCache.set(msgId, message);
+    return message;
+  };
+
+  const streamUncachedRange = async (
+    message: Api.Message,
+    offsetInChunk: number,
+    bytesNeeded: number
+  ) => {
+    if (!message.media) {
+      throw new Error("Chunk message has no downloadable media");
+    }
+    const alignedOffset = Math.floor(offsetInChunk / 4096) * 4096;
+    const unalignedPrefix = offsetInChunk - alignedOffset;
+    let isFirstChunk = true;
+    let bytesSent = 0;
+    const iterParams: IterDownloadFunction = {
+      file: message.media,
+      offset: bigInt(alignedOffset),
+      limit: bytesNeeded + unalignedPrefix,
+      requestSize: STREAM_REQUEST_SIZE,
+    };
+
+    for await (const rawChunk of client.iterDownload(iterParams)) {
+      if (aborted) break;
+
+      let dataToSend = rawChunk instanceof Uint8Array ? rawChunk : new Uint8Array(rawChunk);
+      if (isFirstChunk) {
+        isFirstChunk = false;
+        if (unalignedPrefix > 0) {
+          dataToSend = dataToSend.slice(unalignedPrefix);
+        }
+      }
+
+      const remaining = bytesNeeded - bytesSent;
+      if (dataToSend.length > remaining) {
+        dataToSend = dataToSend.slice(0, remaining);
+      }
+
+      sendBytes(dataToSend);
+      bytesSent += dataToSend.length;
+      if (bytesSent >= bytesNeeded) break;
+    }
+
+    return bytesSent;
+  };
+
+  try {
+    port.postMessage({
+      type: "HEADER",
+      status: hasRange ? 206 : 200,
       start,
       end,
       totalSize: file.size,
-      mimeType: type,
+      contentLength,
+      mimeType,
     });
 
-    let isFirstChunk = true;
-    let bytesSent = 0;
-    
-    for await (const chunk of client.iterDownload({
-      file: messages[0].media,
-      offset: bigInt(alignedOffset),
-      limit: limit + unalignedPrefix,
-      requestSize: 256 * 1024, // 256KB request chunks for faster progressive delivery
-    } as any)) {
-      if (aborted) {
-        break;
+    let cursor = start;
+    while (cursor <= end && !aborted) {
+      const chunkIndex = Math.floor(cursor / CHUNK_SIZE);
+      const chunkStart = chunkIndex * CHUNK_SIZE;
+      const offsetInChunk = cursor - chunkStart;
+      const bytesNeeded = Math.min(end - cursor + 1, CHUNK_SIZE - offsetInChunk);
+
+      const cachedData = previewChunkCache.get(fileId)?.get(chunkIndex);
+      if (cachedData) {
+        const slice = cachedData.slice(offsetInChunk, offsetInChunk + bytesNeeded);
+        sendBytes(slice);
+        cursor += slice.length;
+        continue;
       }
-      
-      let dataToSend = chunk;
-      if (isFirstChunk && unalignedPrefix > 0) {
-        dataToSend = chunk.slice(unalignedPrefix);
-        isFirstChunk = false;
+
+      const message = await getChunkMessage(chunkIndex);
+      if (mimeType === "application/octet-stream") {
+        const docInfo = getMessageDocumentInfo(message);
+        mimeType = docInfo.mimeType || mimeType;
       }
-      if (bytesSent + dataToSend.length > limit) {
-        dataToSend = dataToSend.slice(0, limit - bytesSent);
+
+      const sent = await streamUncachedRange(message, offsetInChunk, bytesNeeded);
+      if (sent <= 0) {
+        throw new Error(`No bytes returned for chunk ${chunkIndex}`);
       }
-      
-      const uint8 = new Uint8Array(dataToSend);
-      port.postMessage({
-        type: "CHUNK",
-        chunk: uint8.buffer,
-      }, [uint8.buffer]);
-      
-      bytesSent += dataToSend.length;
-      if (bytesSent >= limit) break;
+      cursor += sent;
     }
     
     if (!aborted) {
       port.postMessage({ type: "END" });
     }
     
-  } catch (e: any) {
-    port.postMessage({ type: "ERROR", error: e.message });
+  } catch (e: unknown) {
+    console.error("[STREAM] ERROR:", e);
+    port.postMessage({ type: "ERROR", error: getErrorMessage(e) });
   }
 }
 
-async function runWithConcurrency<T>(tasks: (() => Promise<T>)[], concurrency: number): Promise<T[]> {
+async function runWithConcurrency<T>(
+  tasks: (() => Promise<T>)[],
+  concurrency: number,
+  signal?: AbortSignal
+): Promise<T[]> {
   const results: T[] = [];
   let index = 0;
   async function worker() {
     while (index < tasks.length) {
+      if (signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
       const i = index++;
       results[i] = await tasks[i]();
     }
@@ -188,6 +413,37 @@ async function runWithConcurrency<T>(tasks: (() => Promise<T>)[], concurrency: n
   const workers = Array.from({ length: Math.min(concurrency, tasks.length) }).map(() => worker());
   await Promise.all(workers);
   return results;
+}
+
+async function getManifestMessageMap(
+  client: TelegramClient,
+  peer: Api.TypeInputPeer,
+  chunkIds: number[]
+): Promise<Map<number, Api.Message>> {
+  const messageMap = new Map<number, Api.Message>();
+
+  for (const msgId of chunkIds) {
+    const cachedMsg = messageCache.get(msgId);
+    if (cachedMsg) {
+      messageMap.set(msgId, cachedMsg);
+    }
+  }
+
+  const missingMessageIds = chunkIds.filter((id) => !messageMap.has(id));
+  const batchSize = 100;
+  for (let i = 0; i < missingMessageIds.length; i += batchSize) {
+    const fetchedMessages = await client.getMessages(peer, {
+      ids: missingMessageIds.slice(i, i + batchSize),
+    });
+    for (const msg of fetchedMessages) {
+      if (msg && msg.className === "Message") {
+        messageMap.set(msg.id, msg);
+        messageCache.set(msg.id, msg);
+      }
+    }
+  }
+
+  return messageMap;
 }
 
 /**
@@ -320,15 +576,18 @@ function getDynamicConcurrency() {
 
   if (isMobile) {
     if (cores <= 2) {
-      return { segments: 2, workers: 4 }; // Safe low-end mobile (8 streams)
+      return { segments: 2, workers: 4 };
     }
-    return { segments: 3, workers: 8 }; // Mid-range/high-end mobile (24 streams)
+    return { segments: 4, workers: 6 };
   }
 
-  if (cores >= 8) {
-    return { segments: 4, workers: 16 }; // High-performance desktop (64 parallel streams - full speed blitz)
+  if (cores >= 12) {
+    return { segments: 10, workers: 10 };
   }
-  return { segments: 3, workers: 12 }; // Standard desktop (36 streams)
+  if (cores >= 8) {
+    return { segments: 8, workers: 8 };
+  }
+  return { segments: 6, workers: 6 };
 }
 
 /**
@@ -339,7 +598,8 @@ export async function downloadFile(
   client: TelegramClient,
   config: DriveConfig,
   manifest: ChunkManifest,
-  onProgress?: (downloaded: number, total: number) => void
+  onProgress?: (downloaded: number, total: number) => void,
+  signal?: AbortSignal
 ): Promise<void> {
   const { segments } = getDynamicConcurrency();
   let streamsaver: typeof import("streamsaver") | null = null;
@@ -356,56 +616,59 @@ export async function downloadFile(
   };
   const progressInterval = setInterval(emitProgress, 100);
 
+  let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
+
   try {
+    if (signal?.aborted) {
+      throw new DOMException("Download aborted", "AbortError");
+    }
     emitProgress();
 
-    // Pre-fetch all chunk messages in a single batch request to save round-trip connection overhead
     const peer = new Api.InputPeerChannel({
       channelId: bigInt(config.chatId),
       accessHash: bigInt(config.accessHash),
     });
-    const fetchedMessages = await client.getMessages(peer, { ids: manifest.chunks });
-    const messageMap = new Map<number, Api.Message>();
-    for (const msg of fetchedMessages) {
-      if (msg && msg.className === "Message") {
-        messageMap.set(msg.id, msg);
-      }
-    }
+    const messageMap = await getManifestMessageMap(client, peer, manifest.chunks);
 
     if (streamsaver) {
       // Streaming download — avoids V8 heap pressure on huge files
       const fileStream = streamsaver.createWriteStream(manifest.fileName, {
         size: manifest.fileSize,
       });
-      const writer = fileStream.getWriter();
+      const activeWriter = fileStream.getWriter();
+      writer = activeWriter;
       const pendingWrites = new Map<number, Uint8Array>();
       let nextWriteIndex = 0;
       let writeLock = Promise.resolve();
 
       const tasks = manifest.chunks.map((msgId, index) => async () => {
+        if (signal?.aborted) {
+          throw new DOMException("Download aborted", "AbortError");
+        }
         let message = messageMap.get(msgId);
         if (!message) {
           const messages = await client.getMessages(peer, { ids: [msgId] });
-          if (messages.length > 0 && messages[0]) {
+          if (messages.length > 0 && messages[0] && messages[0].className === "Message") {
             message = messages[0];
             messageMap.set(msgId, message);
+            messageCache.set(msgId, message);
           } else {
             throw new Error(`Message not found for chunk ${index}`);
           }
         }
 
-        const mediaSize = (message.media as any)?.document?.size || CHUNK_SIZE;
-        const idealWorkers = Math.min(16, Math.max(6, Math.ceil(Number(mediaSize) / (1024 * 1024 * 1.5))));
-
         let attempts = 0;
         while (attempts < 3) {
+          if (signal?.aborted) {
+            throw new DOMException("Download aborted", "AbortError");
+          }
           try {
-            const buffer = (await client.downloadMedia(message, {
-              workers: idealWorkers,
-              progressCallback: (dl: any, total: any) => {
+            const downloadParams: DownloadMediaInterface = {
+              progressCallback: (dl) => {
                 chunkProgress[index] = Number(dl);
               },
-            } as any)) as Buffer | undefined;
+            };
+            const buffer = (await client.downloadMedia(message, downloadParams)) as Buffer | undefined;
 
             if (buffer && buffer.length > 0) {
               chunkProgress[index] = buffer.length;
@@ -413,7 +676,10 @@ export async function downloadFile(
               writeLock = writeLock.then(async () => {
                 pendingWrites.set(index, arr);
                 while (pendingWrites.has(nextWriteIndex)) {
-                  await writer.write(pendingWrites.get(nextWriteIndex)!);
+                  if (signal?.aborted) {
+                    throw new DOMException("Download aborted", "AbortError");
+                  }
+                  await activeWriter.write(pendingWrites.get(nextWriteIndex)!);
                   pendingWrites.delete(nextWriteIndex);
                   nextWriteIndex++;
                 }
@@ -430,11 +696,14 @@ export async function downloadFile(
         throw new Error(`Failed to download chunk ${index}`);
       });
 
-      await runWithConcurrency(tasks, segments);
-      await writer.close();
+      await runWithConcurrency(tasks, segments, signal);
+      await activeWriter.close();
     } else {
       // Fallback: collect all buffers and trigger a download blob
       const tasks = manifest.chunks.map((msgId, index) => async () => {
+        if (signal?.aborted) {
+          throw new DOMException("Download aborted", "AbortError");
+        }
         let message = messageMap.get(msgId);
         if (!message) {
           const messages = await client.getMessages(peer, { ids: [msgId] });
@@ -446,18 +715,18 @@ export async function downloadFile(
           }
         }
 
-        const mediaSize = (message.media as any)?.document?.size || CHUNK_SIZE;
-        const idealWorkers = Math.min(16, Math.max(6, Math.ceil(Number(mediaSize) / (1024 * 1024 * 1.5))));
-
         let attempts = 0;
         while (attempts < 3) {
+          if (signal?.aborted) {
+            throw new DOMException("Download aborted", "AbortError");
+          }
           try {
-            const buffer = (await client.downloadMedia(message, {
-              workers: idealWorkers,
-              progressCallback: (dl: any, total: any) => {
+            const downloadParams: DownloadMediaInterface = {
+              progressCallback: (dl) => {
                 chunkProgress[index] = Number(dl);
               },
-            } as any)) as Buffer | undefined;
+            };
+            const buffer = (await client.downloadMedia(message, downloadParams)) as Buffer | undefined;
 
             if (buffer && buffer.length > 0) {
               chunkProgress[index] = buffer.length;
@@ -472,7 +741,7 @@ export async function downloadFile(
         throw new Error(`Failed to download chunk ${index}`);
       });
 
-      const results = await runWithConcurrency(tasks, segments);
+      const results = await runWithConcurrency(tasks, segments, signal);
       results.sort((a, b) => a.index - b.index);
 
       const blob = new Blob(results.map((r) => r.buffer));
@@ -485,6 +754,15 @@ export async function downloadFile(
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }
+  } catch (err) {
+    if (writer) {
+      try {
+        await writer.abort(err);
+      } catch {
+        // ignore writer abort errors
+      }
+    }
+    throw err;
   } finally {
     clearInterval(progressInterval);
     emitProgress(); // final emit
@@ -499,7 +777,8 @@ export async function downloadFileToMemory(
   client: TelegramClient,
   config: DriveConfig,
   manifest: ChunkManifest,
-  onProgress?: (downloaded: number, total: number) => void
+  onProgress?: (downloaded: number, total: number) => void,
+  signal?: AbortSignal
 ): Promise<Blob> {
   const { segments } = getDynamicConcurrency();
   const chunkProgress = new Float64Array(manifest.chunks.length);
@@ -510,45 +789,45 @@ export async function downloadFileToMemory(
   const progressInterval = setInterval(emitProgress, 100);
 
   try {
+    if (signal?.aborted) {
+      throw new DOMException("Download aborted", "AbortError");
+    }
     emitProgress();
 
-    // Pre-fetch all chunk messages in a single batch request to save round-trip connection overhead
     const peer = new Api.InputPeerChannel({
       channelId: bigInt(config.chatId),
       accessHash: bigInt(config.accessHash),
     });
-    const fetchedMessages = await client.getMessages(peer, { ids: manifest.chunks });
-    const messageMap = new Map<number, Api.Message>();
-    for (const msg of fetchedMessages) {
-      if (msg && msg.className === "Message") {
-        messageMap.set(msg.id, msg);
-      }
-    }
+    const messageMap = await getManifestMessageMap(client, peer, manifest.chunks);
 
     const tasks = manifest.chunks.map((msgId, index) => async () => {
+      if (signal?.aborted) {
+        throw new DOMException("Download aborted", "AbortError");
+      }
       let message = messageMap.get(msgId);
       if (!message) {
         const messages = await client.getMessages(peer, { ids: [msgId] });
-        if (messages.length > 0 && messages[0]) {
+        if (messages.length > 0 && messages[0] && messages[0].className === "Message") {
           message = messages[0];
           messageMap.set(msgId, message);
+          messageCache.set(msgId, message);
         } else {
           throw new Error(`Message not found for chunk ${index}`);
         }
       }
 
-      const mediaSize = (message.media as any)?.document?.size || CHUNK_SIZE;
-      const idealWorkers = Math.min(16, Math.max(6, Math.ceil(Number(mediaSize) / (1024 * 1024 * 1.5))));
-
       let attempts = 0;
       while (attempts < 3) {
+        if (signal?.aborted) {
+          throw new DOMException("Download aborted", "AbortError");
+        }
         try {
-          const buffer = (await client.downloadMedia(message, {
-            workers: idealWorkers,
-            progressCallback: (dl: any, total: any) => {
+          const downloadParams: DownloadMediaInterface = {
+            progressCallback: (dl) => {
               chunkProgress[index] = Number(dl);
             },
-          } as any)) as Buffer | undefined;
+          };
+          const buffer = (await client.downloadMedia(message, downloadParams)) as Buffer | undefined;
 
           if (buffer && buffer.length > 0) {
             chunkProgress[index] = buffer.length;
@@ -563,7 +842,7 @@ export async function downloadFileToMemory(
       throw new Error(`Failed to download chunk ${index}`);
     });
 
-    const results = await runWithConcurrency(tasks, segments);
+    const results = await runWithConcurrency(tasks, segments, signal);
     results.sort((a, b) => a.index - b.index);
 
     return new Blob(results.map((r) => r.buffer));
