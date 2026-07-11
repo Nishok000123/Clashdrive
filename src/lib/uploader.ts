@@ -52,15 +52,15 @@ function getDynamicUploadConcurrency() {
     if (cores <= 2) {
       return { segments: 1, workers: 4 };
     }
-    return { segments: 2, workers: Math.max(6, UPLOAD_WORKERS) };
+    return { segments: 1, workers: 6 };
   }
   if (cores >= 12) {
-    return { segments: 5, workers: 12 };
+    return { segments: 3, workers: 8 };
   }
   if (cores >= 8) {
-    return { segments: 4, workers: 10 };
+    return { segments: 2, workers: 8 };
   }
-  return { segments: 3, workers: UPLOAD_WORKERS };
+  return { segments: 2, workers: 6 };
 }
 
 /**

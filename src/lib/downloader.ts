@@ -35,6 +35,83 @@ function getMessageDocumentInfo(message: Api.Message | undefined): {
   };
 }
 
+async function downloadMediaWithWorkers(
+  client: TelegramClient,
+  message: Api.Message,
+  options: {
+    workers?: number;
+    progressCallback?: (dl: bigInt.BigInteger, total: bigInt.BigInteger) => void;
+  } = {}
+): Promise<Buffer> {
+  const media = message.media;
+  if (!media) {
+    throw new Error("No media found in message");
+  }
+
+  const msgData: [any, number] | undefined = message.inputChat
+    ? [message.inputChat, message.id]
+    : undefined;
+
+  if (media.className === "MessageMediaDocument" && (media as Api.MessageMediaDocument).document) {
+    const doc = (media as Api.MessageMediaDocument).document as Api.Document;
+    const inputLocation = new Api.InputDocumentFileLocation({
+      id: doc.id,
+      accessHash: doc.accessHash,
+      fileReference: doc.fileReference,
+      thumbSize: "",
+    });
+
+    const buffer = await client.downloadFile(inputLocation, {
+      dcId: doc.dcId,
+      fileSize: doc.size,
+      progressCallback: options.progressCallback,
+      msgData,
+    });
+    return buffer as unknown as Buffer;
+  }
+
+  if (media.className === "MessageMediaPhoto" && (media as Api.MessageMediaPhoto).photo) {
+    const photo = (media as Api.MessageMediaPhoto).photo as Api.Photo;
+    const sizes = photo.sizes || [];
+    const size = sizes.find((s) => s.className !== "PhotoSizeEmpty");
+    const inputLocation = new Api.InputPhotoFileLocation({
+      id: photo.id,
+      accessHash: photo.accessHash,
+      fileReference: photo.fileReference,
+      thumbSize: size ? (size as any).type || "" : "",
+    });
+
+    let fileSize = 512;
+    if (size) {
+      if (size.className === "PhotoSizeProgressive") {
+        fileSize = Math.max(...(size as any).sizes);
+      } else {
+        fileSize = (size as any).size || 512;
+      }
+    }
+
+    const buffer = await client.downloadFile(inputLocation, {
+      dcId: photo.dcId,
+      fileSize: bigInt(fileSize),
+      progressCallback: options.progressCallback,
+      msgData,
+    });
+    return buffer as unknown as Buffer;
+  }
+
+  // Fallback to client.downloadMedia
+  const buffer = await client.downloadMedia(message, {
+    progressCallback: options.progressCallback
+      ? (dl, total) => options.progressCallback!(dl, total)
+      : undefined,
+  });
+  if (!buffer) {
+    throw new Error("Download failed");
+  }
+  return buffer as unknown as Buffer;
+}
+
+
 export function mimeTypeFromName(fileName: string): string {
   const ext = fileName.split(".").pop()?.toLowerCase();
   if (["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext || "")) {
@@ -174,7 +251,7 @@ export async function downloadChunkToCache(
   let attempts = 0;
   while (attempts < 3) {
     try {
-      const buffer = (await client.downloadMedia(message)) as Buffer | undefined;
+      const buffer = await downloadMediaWithWorkers(client, message, { workers: 8 });
 
       if (buffer && buffer.length > 0) {
         const arr = new Uint8Array(buffer);
@@ -305,7 +382,8 @@ export async function handleStreamRequest(
   const streamUncachedRange = async (
     message: Api.Message,
     offsetInChunk: number,
-    bytesNeeded: number
+    bytesNeeded: number,
+    dcId?: number
   ) => {
     if (!message.media) {
       throw new Error("Chunk message has no downloadable media");
@@ -319,6 +397,7 @@ export async function handleStreamRequest(
       offset: bigInt(alignedOffset),
       limit: bytesNeeded + unalignedPrefix,
       requestSize: STREAM_REQUEST_SIZE,
+      dcId,
     };
 
     for await (const rawChunk of client.iterDownload(iterParams)) {
@@ -377,7 +456,17 @@ export async function handleStreamRequest(
         mimeType = docInfo.mimeType || mimeType;
       }
 
-      const sent = await streamUncachedRange(message, offsetInChunk, bytesNeeded);
+      let dcId: number | undefined;
+      const media = message.media;
+      if (media) {
+        if (media.className === "MessageMediaDocument" && (media as Api.MessageMediaDocument).document) {
+          dcId = ((media as Api.MessageMediaDocument).document as Api.Document).dcId;
+        } else if (media.className === "MessageMediaPhoto" && (media as Api.MessageMediaPhoto).photo) {
+          dcId = ((media as Api.MessageMediaPhoto).photo as Api.Photo).dcId;
+        }
+      }
+
+      const sent = await streamUncachedRange(message, offsetInChunk, bytesNeeded, dcId);
       if (sent <= 0) {
         throw new Error(`No bytes returned for chunk ${chunkIndex}`);
       }
@@ -663,12 +752,12 @@ export async function downloadFile(
             throw new DOMException("Download aborted", "AbortError");
           }
           try {
-            const downloadParams: DownloadMediaInterface = {
+            const buffer = await downloadMediaWithWorkers(client, message, {
+              workers: 16,
               progressCallback: (dl) => {
                 chunkProgress[index] = Number(dl);
               },
-            };
-            const buffer = (await client.downloadMedia(message, downloadParams)) as Buffer | undefined;
+            });
 
             if (buffer && buffer.length > 0) {
               chunkProgress[index] = buffer.length;
@@ -721,12 +810,12 @@ export async function downloadFile(
             throw new DOMException("Download aborted", "AbortError");
           }
           try {
-            const downloadParams: DownloadMediaInterface = {
+            const buffer = await downloadMediaWithWorkers(client, message, {
+              workers: 16,
               progressCallback: (dl) => {
                 chunkProgress[index] = Number(dl);
               },
-            };
-            const buffer = (await client.downloadMedia(message, downloadParams)) as Buffer | undefined;
+            });
 
             if (buffer && buffer.length > 0) {
               chunkProgress[index] = buffer.length;
@@ -822,12 +911,12 @@ export async function downloadFileToMemory(
           throw new DOMException("Download aborted", "AbortError");
         }
         try {
-          const downloadParams: DownloadMediaInterface = {
-            progressCallback: (dl) => {
-              chunkProgress[index] = Number(dl);
-            },
-          };
-          const buffer = (await client.downloadMedia(message, downloadParams)) as Buffer | undefined;
+            const buffer = await downloadMediaWithWorkers(client, message, {
+              workers: 12,
+              progressCallback: (dl) => {
+                chunkProgress[index] = Number(dl);
+              },
+            });
 
           if (buffer && buffer.length > 0) {
             chunkProgress[index] = buffer.length;

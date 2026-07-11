@@ -6,7 +6,7 @@ import { AuthWizard } from "./components/auth/AuthWizard";
 import { Dashboard } from "./components/drive/Dashboard";
 import { LoadingScreen } from "./components/layout/LoadingScreen";
 import { PreviewModal } from "./components/drive/PreviewModal";
-import { handleStreamRequest, normalizeRenamedFileName, downloadFileToMemory, mimeTypeFromName, preFetchMessages } from "./lib/downloader";
+import { handleStreamRequest, normalizeRenamedFileName, downloadFileToMemory, mimeTypeFromName, preFetchMessages, downloadChunkToCache } from "./lib/downloader";
 import { useTheme } from "./hooks/useTheme";
 import type { DriveFile, TopicFolder } from "./types";
 import { Api } from "telegram";
@@ -437,6 +437,12 @@ export default function App() {
           preFetchMessages(client, driveConfig, file.manifest).catch((err) => {
             console.warn("Message prefetch failed; live stream will fetch on demand:", err);
           });
+
+          if (file.manifest.chunks.length > 0) {
+            downloadChunkToCache(client, driveConfig, file.id.toString(), file.manifest, 0).catch((err) => {
+              console.warn("Prefetching chunk 0 to cache failed:", err);
+            });
+          }
         } catch (err) {
           console.error("Streaming preview failed:", err);
           if (isCurrentPreview()) {
