@@ -52,7 +52,21 @@ export async function scanForDriveGroup(
     }
   }
 
-  const dialogs = await client.getDialogs({ limit: 200 });
+  const dialogs: any[] = [];
+  try {
+    const mainDialogs = await client.getDialogs({ limit: 200 });
+    dialogs.push(...mainDialogs);
+  } catch (err) {
+    console.warn("Failed to fetch main dialogs during radar scan:", err);
+  }
+
+  try {
+    // Also scan archived dialogs (folder: 1) in case the user archived the drive group
+    const archivedDialogs = await client.getDialogs({ limit: 100, folder: 1 });
+    dialogs.push(...archivedDialogs);
+  } catch (err) {
+    // folder: 1 might fail if there are no archived dialogs, which is fine
+  }
 
   for (const dialog of dialogs) {
     const entity = dialog.entity;
@@ -61,6 +75,11 @@ export async function scanForDriveGroup(
     // We only care about channels / supergroups
     if (entity.className !== "Channel") continue;
     const channel = entity as Api.Channel;
+
+    // OPTIMIZATION: Only verify description if the title matches or contains "drive" or "clash"
+    // This prevents requesting GetFullChannel details on every channel (which causes FloodWait)
+    const titleLower = channel.title.toLowerCase();
+    if (!titleLower.includes("drive") && !titleLower.includes("clash")) continue;
 
     // Pull full info to read the "about" field
     try {

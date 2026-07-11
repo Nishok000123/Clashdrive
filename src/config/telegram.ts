@@ -9,7 +9,7 @@ export const API_HASH = "8da85b0d5bfe62527e5b244c209159c3";
  * Client Identification for Telegram Active Sessions screen
  */
 export const DEVICE_MODEL = "ClashDrive";
-export const APP_VERSION = "2.0.0";
+export const APP_VERSION = "1.0";
 export const SYSTEM_VERSION = typeof navigator !== "undefined" && navigator.userAgent
   ? (navigator.userAgent.includes("Windows") ? "Windows" : navigator.userAgent.includes("Mac") ? "macOS" : navigator.userAgent.includes("Linux") ? "Linux" : "Web")
   : "Web";
