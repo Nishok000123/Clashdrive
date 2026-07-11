@@ -1,79 +1,79 @@
 @import "tailwindcss";
 
 :root {
-  /* Light Mode Theme - Elegant Blue Slate */
-  --color-surface-50: #f8fafc;
+  /* Light Mode Theme - Material Design 3 Tonal Blue */
+  --color-surface-50: #f7f9ff;
   --color-surface-100: #ffffff;
-  --color-surface-200: #f1f5f9;
-  --color-surface-300: #e2e8f0;
-  --color-surface-400: #cbd5e1;
-  --color-surface-500: #94a3b8;
-  --color-surface-600: #64748b;
-  --color-surface-700: #475569;
-  --color-surface-800: #334155;
-  --color-surface-900: #0f172a;
+  --color-surface-200: #edf1fa;
+  --color-surface-300: #dbe2f4;
+  --color-surface-400: #c2cde4;
+  --color-surface-500: #8a99b5;
+  --color-surface-600: #586782;
+  --color-surface-700: #3e4b64;
+  --color-surface-800: #252f46;
+  --color-surface-900: #111827;
 
-  --color-brand-400: #4f46e5;
-  --color-brand-500: #6366f1;
-  --color-brand-600: #4f46e5;
+  --color-brand-400: #3a8dff;
+  --color-brand-500: #005cbb;
+  --color-brand-600: #00438c;
 
-  --color-accent-400: #06b6d4;
-  --color-accent-500: #0ea5e9;
-  --color-accent-600: #0284c7;
+  --color-accent-400: #00a4b4;
+  --color-accent-500: #006874;
+  --color-accent-600: #004f59;
 
-  --color-success: #10b981;
-  --color-warning: #f59e0b;
-  --color-danger: #ef4444;
+  --color-success: #198754;
+  --color-warning: #fd7e14;
+  --color-danger: #dc3545;
 
-  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-sans: "Plus Jakarta Sans", "Inter", system-ui, -apple-system, sans-serif;
   
   --glass-bg: #ffffff; /* Solid white card background */
-  --glass-border: #e2e8f0; /* Solid gray border (color-surface-300) */
-  --glass-hover-bg: #f8fafc; /* Solid hover background (color-surface-50) */
-  --glass-hover-border: #cbd5e1; /* Solid hover border (color-surface-400) */
-  --shadow-premium: 0 4px 20px -2px rgba(0, 0, 0, 0.02), 0 2px 6px -1px rgba(0, 0, 0, 0.02);
-  --shadow-premium-lg: 0 20px 40px -4px rgba(0, 0, 0, 0.04), 0 8px 16px -2px rgba(0, 0, 0, 0.02);
+  --glass-border: #dbe2f4; /* Solid M3 border */
+  --glass-hover-bg: #edf1fa; /* Solid hover background */
+  --glass-hover-border: #c2cde4; /* Solid hover border */
+  --shadow-premium: 0 4px 12px rgba(0, 0, 0, 0.03);
+  --shadow-premium-lg: 0 12px 24px rgba(0, 0, 0, 0.06);
 
   /* Preview modal tokens */
-  --preview-bg: rgba(0, 0, 0, 0.88);
+  --preview-bg: rgba(0, 0, 0, 0.9);
   --preview-controls-bg: rgba(0, 0, 0, 0.7);
   --preview-controls-hover: rgba(255, 255, 255, 0.12);
   --preview-seek-track: rgba(255, 255, 255, 0.2);
-  --preview-seek-fill: #6366f1;
+  --preview-seek-fill: #005cbb;
   --preview-seek-thumb: #ffffff;
 }
 
 .dark {
-  /* Dark Mode Theme - Luxury Space Slate */
-  --color-surface-50: #030712;
-  --color-surface-100: #090d16;
-  --color-surface-200: #111827;
-  --color-surface-300: #1f2937;
-  --color-surface-400: #374151;
-  --color-surface-500: #6b7280;
-  --color-surface-600: #9ca3af;
-  --color-surface-700: #d1d5db;
-  --color-surface-800: #e5e7eb;
-  --color-surface-900: #f9fafb;
+  /* Dark Mode Theme - Material Design 3 Midnight */
+  --color-surface-50: #10141d;
+  --color-surface-100: #171d2b;
+  --color-surface-200: #21293a;
+  --color-surface-300: #303b51;
+  --color-surface-400: #42526e;
+  --color-surface-500: #6c7e9c;
+  --color-surface-600: #93a6c4;
+  --color-surface-700: #b9c9df;
+  --color-surface-800: #dce5f1;
+  --color-surface-900: #f3f7fc;
 
-  --color-brand-400: #818cf8;
-  --color-brand-500: #6366f1;
-  --color-brand-600: #4f46e5;
+  --color-brand-400: #8cbeff;
+  --color-brand-500: #3a8dff;
+  --color-brand-600: #005cbb;
 
-  --color-accent-400: #22d3ee;
-  --color-accent-500: #0ea5e9;
-  --color-accent-600: #0284c7;
+  --color-accent-400: #8ee5f4;
+  --color-accent-500: #006874;
+  --color-accent-600: #004f59;
 
-  --color-success: #34d399;
-  --color-warning: #fbbf24;
-  --color-danger: #f87171;
+  --color-success: #20c997;
+  --color-warning: #ffc107;
+  --color-danger: #ea868f;
 
-  --glass-bg: #090d16; /* Solid dark card background (color-surface-100) */
-  --glass-border: #1f2937; /* Solid gray border (color-surface-300) */
-  --glass-hover-bg: #111827; /* Solid hover background (color-surface-200) */
-  --glass-hover-border: #374151; /* Solid hover border (color-surface-400) */
-  --shadow-premium: 0 10px 30px -10px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(255, 255, 255, 0.01);
-  --shadow-premium-lg: 0 30px 60px -15px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(255, 255, 255, 0.01);
+  --glass-bg: #171d2b; /* Solid dark card background */
+  --glass-border: #303b51; /* Solid gray border */
+  --glass-hover-bg: #21293a; /* Solid hover background */
+  --glass-hover-border: #42526e; /* Solid hover border */
+  --shadow-premium: 0 8px 16px rgba(0, 0, 0, 0.25);
+  --shadow-premium-lg: 0 16px 32px rgba(0, 0, 0, 0.4);
 }
 
 @theme {

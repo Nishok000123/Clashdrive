@@ -78,7 +78,7 @@ export function Sidebar({
   return (
     <aside className={className || "w-64 shrink-0 hidden lg:flex flex-col border-r border-surface-300/40 dark:border-surface-300/10 bg-surface-100/30 h-[calc(100vh-4rem)] select-none"}>
       <div className="p-4">
-        <Button onClick={onCreateFolder} className="w-full rounded-2xl flex items-center justify-center gap-2 shadow-md hover:shadow-brand-500/15" size="md">
+        <Button onClick={onCreateFolder} className="w-full rounded-full flex items-center justify-center gap-2 shadow-sm hover:shadow-md" size="md">
           <svg
             className="w-4.5 h-4.5"
             fill="none"
@@ -99,10 +99,10 @@ export function Sidebar({
       <nav className="flex-1 overflow-y-auto px-3 pb-4 space-y-1">
         <button
           onClick={onBackToRoot}
-          className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm transition-all duration-300 font-extrabold tracking-tight border ${
+          className={`w-full flex items-center gap-3.5 px-5 py-3 rounded-full text-sm transition-all duration-250 font-extrabold tracking-tight border select-none ${
             activeFolderId === null
               ? "bg-brand-500/10 text-brand-500 border-brand-500/20 shadow-inner"
-              : "text-surface-750 dark:text-surface-700 hover:bg-surface-200/50 dark:hover:bg-surface-300/10 border-transparent hover:border-surface-300/30"
+              : "text-surface-750 dark:text-surface-700 hover:bg-surface-200/60 dark:hover:bg-surface-300/10 border-transparent hover:border-surface-300/30"
           }`}
         >
           <svg
@@ -132,14 +132,14 @@ export function Sidebar({
             <button
               key={folder.id}
               onClick={() => onFolderClick(folder.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm transition-all duration-300 group font-extrabold tracking-tight border ${
+              className={`w-full flex items-center gap-3.5 px-5 py-3 rounded-full text-sm transition-all duration-250 group font-extrabold tracking-tight border select-none ${
                 activeFolderId === folder.id
                   ? "bg-brand-500/10 text-brand-500 border-brand-500/20 shadow-inner"
-                  : "text-surface-750 dark:text-surface-700 hover:bg-surface-200/50 dark:hover:bg-surface-300/10 border-transparent hover:border-surface-300/30"
+                  : "text-surface-750 dark:text-surface-700 hover:bg-surface-200/60 dark:hover:bg-surface-300/10 border-transparent hover:border-surface-300/30"
               }`}
             >
               <div
-                className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] shrink-0 font-extrabold"
+                className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] shrink-0 font-extrabold shadow-inner"
                 style={{
                   backgroundColor: `${getFolderColor(folder.title)}15`,
                   color: getFolderColor(folder.title),

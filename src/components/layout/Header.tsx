@@ -233,16 +233,16 @@ export function Header({
           <div className="relative">
             <button
               onClick={() => setShowDropdown(!showDropdown)}
-              className="flex items-center gap-2.5 p-1.5 pr-3 rounded-xl bg-surface-100/40 dark:bg-surface-200/20 hover:bg-surface-200/80 dark:hover:bg-surface-350/20 border border-surface-300/40 dark:border-surface-300/10 transition-all active:scale-95 group shadow-sm cursor-pointer"
+              className="flex items-center gap-2.5 p-1.5 pr-3 rounded-full bg-surface-200/50 dark:bg-surface-200/20 hover:bg-surface-200/90 dark:hover:bg-surface-350/30 border border-surface-300/40 dark:border-surface-300/10 transition-all active:scale-95 group shadow-sm cursor-pointer"
             >
               {userProfile?.avatarUrl ? (
                 <img
                   src={userProfile.avatarUrl}
                   alt={displayName}
-                  className="w-7.5 h-7.5 rounded-lg object-cover border border-surface-300/40 dark:border-surface-300/10 shadow-inner"
+                  className="w-7.5 h-7.5 rounded-full object-cover border border-surface-300/40 dark:border-surface-300/10 shadow-inner"
                 />
               ) : (
-                <div className="w-7.5 h-7.5 rounded-lg gradient-brand flex items-center justify-center text-white text-xs font-bold shadow-md">
+                <div className="w-7.5 h-7.5 rounded-full bg-brand-500 flex items-center justify-center text-white text-xs font-bold shadow-sm">
                   {initials}
                 </div>
               )}
@@ -270,7 +270,7 @@ export function Header({
                 {/* Backdrop */}
                 <div className="fixed inset-0 z-45" onClick={() => setShowDropdown(false)} />
                 
-                <div className="absolute right-0 top-12.5 z-50 glass rounded-3xl p-5 w-[310px] animate-scale-in shadow-2xl border border-brand-500/10 space-y-4 select-none">
+                <div className="absolute right-0 top-12.5 z-50 glass rounded-3xl p-5 w-[310px] animate-scale-in shadow-2xl border border-surface-300/30 dark:border-surface-300/10 space-y-4 select-none">
                   <div className="pb-3.5 border-b border-surface-300/20 dark:border-surface-300/10">
                     <p className="text-[9px] uppercase font-bold tracking-wider text-surface-500">
                       Active Cloud Session
@@ -280,10 +280,10 @@ export function Header({
                         <img
                           src={userProfile.avatarUrl}
                           alt={displayName}
-                          className="w-11 h-11 rounded-xl object-cover border border-surface-300/40 dark:border-surface-300/10"
+                          className="w-11 h-11 rounded-full object-cover border border-surface-300/40 dark:border-surface-300/10"
                         />
                       ) : (
-                        <div className="w-11 h-11 rounded-xl gradient-brand flex items-center justify-center text-white text-lg font-bold shadow-md">
+                        <div className="w-11 h-11 rounded-full bg-brand-500 flex items-center justify-center text-white text-lg font-bold shadow-md">
                           {initials}
                         </div>
                       )}
@@ -326,10 +326,10 @@ export function Header({
                                   <img
                                     src={acc.avatarUrl}
                                     alt={acc.idName}
-                                    className="w-8 h-8 rounded-lg object-cover border border-surface-300/40 dark:border-surface-300/10"
+                                    className="w-8 h-8 rounded-full object-cover border border-surface-300/40 dark:border-surface-300/10"
                                   />
                                 ) : (
-                                  <div className="w-8 h-8 rounded-lg gradient-brand flex items-center justify-center text-white text-xs font-bold">
+                                  <div className="w-8 h-8 rounded-full bg-brand-500 flex items-center justify-center text-white text-xs font-bold">
                                     {acc.idName.charAt(0).toUpperCase()}
                                   </div>
                                 )}

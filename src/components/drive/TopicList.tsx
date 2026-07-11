@@ -58,7 +58,7 @@ export function TopicList({
           <div
             key={folder.id}
             onClick={() => onFolderClick(folder.id)}
-            className="glass rounded-3xl p-5 cursor-pointer border border-surface-300/40 dark:border-surface-300/10 hover:bg-surface-150/80 dark:hover:bg-surface-200/20 hover:border-brand-500/25 dark:hover:border-brand-500/35 group transition-all duration-300 hover:-translate-y-1.5 shadow-sm hover:shadow-md hover:shadow-brand-500/5 select-none animate-slide-up"
+            className="bg-surface-100 dark:bg-surface-200 rounded-3xl p-5 cursor-pointer border border-surface-300/40 dark:border-surface-300/10 hover:bg-surface-200/50 dark:hover:bg-surface-300/20 hover:border-brand-500/25 dark:hover:border-brand-500/35 group transition-all duration-300 hover:-translate-y-1.5 shadow-sm hover:shadow-md hover:shadow-brand-500/5 select-none animate-slide-up"
             style={{ animationDelay: `${idx * 20}ms` }}
           >
             <div className="flex items-start justify-between mb-4">

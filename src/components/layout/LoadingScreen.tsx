@@ -22,9 +22,9 @@ export function LoadingScreen({
         <svg className="absolute inset-0 w-24 h-24" viewBox="0 0 96 96" style={{ animation: "gradient-ring-spin 0.9s linear infinite" }}>
           <defs>
             <linearGradient id="spinnerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#6366f1" />
-              <stop offset="50%" stopColor="#06b6d4" />
-              <stop offset="100%" stopColor="#6366f1" stopOpacity="0" />
+              <stop offset="0%" stopColor="#005cbb" />
+              <stop offset="50%" stopColor="#00a4b4" />
+              <stop offset="100%" stopColor="#005cbb" stopOpacity="0" />
             </linearGradient>
           </defs>
           <circle cx="48" cy="48" r="44" fill="none" stroke="url(#spinnerGrad)" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="200 100" />
@@ -49,8 +49,8 @@ export function LoadingScreen({
           <svg className="w-8 h-8 animate-pulse-slow" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
             <defs>
               <linearGradient id="load-logo-cloud" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor="#6366f1" />
-                <stop offset="100%" stopColor="#06b6d4" />
+                <stop offset="0%" stopColor="#005cbb" />
+                <stop offset="100%" stopColor="#00a4b4" />
               </linearGradient>
             </defs>
             <path d="M42 80c-5.52 0-10-4.48-10-10 0-4.88 3.5-8.94 8.2-9.82C41.4 51.78 49.38 46 58.5 46c8.07 0 15.22 4.45 18 11.02 1.34-.63 2.85-.98 4.45-.98 5.52 0 10 4.48 10 10s-4.48 10-10 10H42z" fill="url(#load-logo-cloud)" />

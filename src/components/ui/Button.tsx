@@ -48,21 +48,21 @@ export function Button({
   );
 
   const base =
-    "relative inline-flex items-center justify-center font-bold rounded-xl transition-all duration-200 cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.96] shadow-sm overflow-hidden";
+    "relative inline-flex items-center justify-center font-extrabold rounded-full transition-all duration-250 ease-out cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.96] overflow-hidden";
 
   const variants: Record<string, string> = {
     primary:
-      "gradient-brand text-white shadow-md shadow-brand-500/10 hover:shadow-lg hover:shadow-brand-500/25 hover:brightness-105 active:brightness-95 border border-brand-500/20",
+      "bg-brand-500 text-white hover:bg-brand-600 active:brightness-95 border border-transparent shadow-sm hover:shadow-md transition-shadow",
     secondary:
-      "bg-surface-200 text-surface-900 border border-surface-300/60 dark:bg-surface-200/40 dark:border-surface-300/10 hover:bg-surface-300 dark:hover:bg-surface-200/80 hover:border-surface-400/80 active:bg-surface-400/50 text-surface-800 dark:text-surface-700",
+      "bg-surface-200 text-surface-900 dark:bg-surface-300/20 dark:text-surface-900 hover:bg-surface-300 dark:hover:bg-surface-300/35 border border-transparent",
     ghost:
-      "bg-transparent text-surface-750 dark:text-surface-700 hover:bg-surface-200/60 dark:hover:bg-surface-200/10 hover:text-surface-950 active:bg-surface-300/30",
+      "bg-transparent text-surface-800 dark:text-surface-700 hover:bg-surface-200/50 dark:hover:bg-surface-200/10 active:bg-surface-300/30",
     danger:
       "bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 hover:border-danger/30 active:bg-danger/30",
     glass:
       "bg-surface-100/30 text-surface-900 border border-surface-300/30 dark:border-surface-300/10 backdrop-blur-md hover:bg-surface-200/50 hover:border-surface-400/40 active:bg-surface-350/40",
     icon:
-      "bg-transparent text-surface-600 dark:text-surface-500 hover:bg-surface-200/60 dark:hover:bg-surface-200/10 hover:text-surface-900 dark:hover:text-surface-800 rounded-full p-0",
+      "bg-transparent text-surface-600 dark:text-surface-500 hover:bg-surface-200/65 dark:hover:bg-surface-200/15 hover:text-surface-900 dark:hover:text-surface-900 rounded-full p-0 border border-transparent",
   };
 
   const sizes: Record<string, string> = {

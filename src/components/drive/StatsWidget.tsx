@@ -38,7 +38,7 @@ export function StatsWidget({ files, indexing, indexingProgress }: StatsWidgetPr
   };
 
   return (
-    <div className="space-y-4.5 px-4 py-4.5 bg-surface-150/40 dark:bg-surface-200/10 rounded-3xl border border-surface-300/40 dark:border-surface-300/10 glass select-none">
+    <div className="space-y-4.5 px-4 py-4.5 bg-surface-200/50 dark:bg-surface-200/10 rounded-3xl border border-surface-300/40 dark:border-surface-300/10 select-none">
       <div className="flex items-center justify-between">
         <span className="text-xs font-bold text-surface-800 tracking-tight">Storage Usage</span>
         {indexing ? (

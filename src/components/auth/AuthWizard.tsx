@@ -69,10 +69,10 @@ export function AuthWizard({
                 <div
                   className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300 ${
                     isActive
-                      ? "gradient-brand text-white shadow-md shadow-brand-500/20 scale-105"
+                      ? "bg-brand-500 text-white shadow-md shadow-brand-500/20 scale-105"
                       : isDone
                         ? "bg-success/10 text-success border border-success/35"
-                        : "bg-surface-300 dark:bg-surface-250 text-surface-600 border border-surface-400/30"
+                        : "bg-surface-300 dark:bg-surface-300 text-surface-600 border border-surface-400/30"
                   }`}
                 >
                   {isDone ? "✓" : i + 1}
@@ -80,7 +80,7 @@ export function AuthWizard({
                 {i < 2 && (
                   <div
                     className={`w-6 h-0.5 rounded-full transition-all duration-300 ${
-                      isDone ? "bg-success/50" : "bg-surface-350 dark:bg-surface-250"
+                      isDone ? "bg-success/50" : "bg-surface-350 dark:bg-surface-300"
                     }`}
                   />
                 )}
@@ -89,7 +89,7 @@ export function AuthWizard({
           })}
         </div>
 
-        <div className="glass rounded-3xl p-8 sm:p-10 glow-brand glow-brand-pulse border border-brand-500/10 shadow-2xl relative overflow-hidden backdrop-blur-xl">
+        <div className="bg-surface-100 dark:bg-surface-200 rounded-[28px] p-8 sm:p-10 border border-surface-300/60 dark:border-surface-300/15 shadow-xl relative overflow-hidden">
           {state.step === "phone" && (
             <PhoneStep
               loading={state.loading}

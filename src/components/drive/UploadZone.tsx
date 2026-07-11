@@ -62,10 +62,10 @@ export function UploadZone({ onDrop, disabled }: UploadZoneProps) {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       onClick={handleZoneClick}
-      className={`relative border-2 border-dashed rounded-2xl p-8 transition-all duration-200 text-center cursor-pointer group select-none ${
+      className={`relative border-2 border-dashed rounded-3xl p-8 transition-all duration-250 text-center cursor-pointer group select-none ${
         isDragging
           ? "border-brand-500 bg-brand-500/5 dark:bg-brand-500/10 scale-[1.01] shadow-inner"
-          : "border-surface-300/60 dark:border-surface-400/15 hover:border-brand-500/40 hover:bg-surface-200/30 dark:hover:bg-surface-200/5"
+          : "border-surface-300/80 dark:border-surface-400/15 hover:border-brand-500/40 hover:bg-surface-200/30 dark:hover:bg-surface-200/5"
       } ${disabled ? "opacity-50 pointer-events-none" : ""}`}
     >
       {/* Hidden file input — pointer-events-none so it never intercepts drag-and-drop */}
@@ -86,7 +86,7 @@ export function UploadZone({ onDrop, disabled }: UploadZoneProps) {
         <div
           className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-250 ${
             isDragging
-              ? "gradient-brand shadow-lg shadow-brand-500/20"
+              ? "bg-brand-500 text-white shadow-lg shadow-brand-500/20"
               : "bg-surface-200 dark:bg-surface-200/10 group-hover:bg-surface-300/70 dark:group-hover:bg-surface-200/20 border border-surface-300/30 dark:border-surface-400/10 shadow-sm"
           }`}
         >

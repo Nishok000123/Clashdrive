@@ -55,7 +55,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
       {/* Panel */}
       <div
         ref={modalRef}
-        className={`relative glass rounded-3xl p-6 sm:p-7 w-full max-w-md mx-auto border border-surface-300/40 dark:border-surface-300/10 shadow-2xl glow-brand ${closing ? "animate-spring-out" : "animate-spring-in"}`}
+        className={`relative bg-surface-100 dark:bg-surface-200 rounded-[28px] p-6 sm:p-7 w-full max-w-md mx-auto border border-surface-300/60 dark:border-surface-300/15 shadow-2xl ${closing ? "animate-spring-out" : "animate-spring-in"}`}
       >
         <div className="flex items-center justify-between mb-5 select-none">
           <h3 className="text-base sm:text-lg font-bold text-surface-900 tracking-tight">{title}</h3>
