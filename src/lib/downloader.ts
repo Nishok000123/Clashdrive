@@ -561,7 +561,7 @@ export async function listFilesInTopic(
   const peer = new Api.InputPeerChannel({ channelId: bigInt(config.chatId), accessHash: bigInt(config.accessHash) });
 
   try {
-    let allMessages: Api.TypeMessage[] = [];
+    const messageById = new Map<number, Api.Message>();
     let offsetId = 0;
     const limit = 100;
 
@@ -587,16 +587,20 @@ export async function listFilesInTopic(
         break;
       }
 
-      allMessages = allMessages.concat(messages);
-
-      // Find the minimum message ID to use as offsetId for the next page
-      let minId = offsetId || Infinity;
       let hasNewMessage = false;
+      let minId = offsetId || Infinity;
+
       for (const msg of messages) {
-        if (offsetId === 0 || msg.id < offsetId) {
-          hasNewMessage = true;
-          if (msg.id < minId) {
-            minId = msg.id;
+        if (msg.className === "Message") {
+          const m = msg as Api.Message;
+          if (!messageById.has(m.id)) {
+            messageById.set(m.id, m);
+          }
+          if (offsetId === 0 || m.id < offsetId) {
+            hasNewMessage = true;
+            if (m.id < minId) {
+              minId = m.id;
+            }
           }
         }
       }
@@ -608,17 +612,7 @@ export async function listFilesInTopic(
       offsetId = minId;
     }
 
-    const messageById = new Map<number, Api.Message>();
-    for (const msg of allMessages) {
-      if (msg.className === "Message") {
-        const m = msg as Api.Message;
-        messageById.set(m.id, m);
-      }
-    }
-
-    for (const msg of allMessages) {
-      if (msg.className !== "Message") continue;
-      const m = msg as Api.Message;
+    for (const m of messageById.values()) {
       if (!m.message) continue;
 
       const manifest = parseManifest(m.message);
