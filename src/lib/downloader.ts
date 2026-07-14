@@ -561,32 +561,62 @@ export async function listFilesInTopic(
   const peer = new Api.InputPeerChannel({ channelId: bigInt(config.chatId), accessHash: bigInt(config.accessHash) });
 
   try {
-    const result = await client.invoke(
-      new Api.messages.GetReplies({
-        peer,
-        msgId: topicId,
-        offsetId: 0,
-        offsetDate: 0,
-        addOffset: 0,
-        limit: 200,
-        maxId: 0,
-        minId: 0,
-        hash: bigInt.zero,
-      })
-    );
+    let allMessages: Api.TypeMessage[] = [];
+    let offsetId = 0;
+    const limit = 100;
 
-    const messages =
-      (result as Api.messages.ChannelMessages).messages ?? [];
+    while (true) {
+      const result = await client.invoke(
+        new Api.messages.GetReplies({
+          peer,
+          msgId: topicId,
+          offsetId,
+          offsetDate: 0,
+          addOffset: 0,
+          limit,
+          maxId: 0,
+          minId: 0,
+          hash: bigInt.zero,
+        })
+      );
+
+      const messages =
+        (result as Api.messages.ChannelMessages).messages ?? [];
+
+      if (messages.length === 0) {
+        break;
+      }
+
+      allMessages = allMessages.concat(messages);
+
+      // Find the minimum message ID to use as offsetId for the next page
+      let minId = offsetId || Infinity;
+      let hasNewMessage = false;
+      for (const msg of messages) {
+        if (offsetId === 0 || msg.id < offsetId) {
+          hasNewMessage = true;
+          if (msg.id < minId) {
+            minId = msg.id;
+          }
+        }
+      }
+
+      if (!hasNewMessage || minId === Infinity || minId === offsetId) {
+        break;
+      }
+
+      offsetId = minId;
+    }
+
     const messageById = new Map<number, Api.Message>();
-
-    for (const msg of messages) {
+    for (const msg of allMessages) {
       if (msg.className === "Message") {
         const m = msg as Api.Message;
         messageById.set(m.id, m);
       }
     }
 
-    for (const msg of messages) {
+    for (const msg of allMessages) {
       if (msg.className !== "Message") continue;
       const m = msg as Api.Message;
       if (!m.message) continue;
@@ -618,6 +648,7 @@ export async function listFilesInTopic(
 
   return files;
 }
+
 
 export async function deleteDriveFile(
   client: TelegramClient,
