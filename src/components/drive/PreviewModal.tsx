@@ -283,6 +283,11 @@ export function PreviewModal({
   const [epubError, setEpubError] = useState<string | null>(null);
   const epubContainerRef = useRef<HTMLDivElement | null>(null);
   const renditionRef = useRef<any>(null);
+  const [epubToc, setEpubToc] = useState<any[]>([]);
+  const [epubCurrentChapterRef, setEpubCurrentChapterRef] = useState<string>("");
+  const [epubProgress, setEpubProgress] = useState<string>("0%");
+  const [epubTheme, setEpubTheme] = useState<string>("dark"); // "dark" | "light" | "sepia" | "cream"
+  const [epubFontSize, setEpubFontSize] = useState<number>(100);
 
   // ─── File info popover ───
   const [showFileInfo, setShowFileInfo] = useState(false);
@@ -685,17 +690,59 @@ export function PreviewModal({
   }, [isText, url, file.id]);
 
   /* ═══════════════════════════════════════════════════════
-     DYNAMIC SCRIPT HELPER
+     DYNAMIC SCRIPT HELPER WITH FALLBACKS
      ═══════════════════════════════════════════════════════ */
 
-  function loadScript(src: string): Promise<void> {
+  function loadScript(srcs: string | string[], globalCheckName?: string): Promise<void> {
+    const sources = Array.isArray(srcs) ? srcs : [srcs];
+    
+    if (globalCheckName && (window as any)[globalCheckName]) {
+      return Promise.resolve();
+    }
+    
     return new Promise((resolve, reject) => {
-      if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
-      const script = document.createElement("script");
-      script.src = src;
-      script.onload = () => resolve();
-      script.onerror = (e) => reject(e);
-      document.head.appendChild(script);
+      // Check if script is already present in document
+      for (const src of sources) {
+        if (document.querySelector(`script[src="${src}"]`)) {
+          if (!globalCheckName || (window as any)[globalCheckName]) {
+            resolve();
+            return;
+          }
+        }
+      }
+      
+      let index = 0;
+      function tryNext() {
+        if (index >= sources.length) {
+          reject(new Error(`Failed to load script from all sources: ${sources.join(', ')}`));
+          return;
+        }
+        const src = sources[index];
+        const script = document.createElement("script");
+        script.src = src;
+        script.onload = () => {
+          if (globalCheckName && !(window as any)[globalCheckName]) {
+            console.warn(`Script loaded from ${src} but global ${globalCheckName} not found.`);
+            try {
+              document.head.removeChild(script);
+            } catch {}
+            index++;
+            tryNext();
+          } else {
+            resolve();
+          }
+        };
+        script.onerror = () => {
+          console.warn(`Failed to load script from ${src}, trying next...`);
+          try {
+            document.head.removeChild(script);
+          } catch {}
+          index++;
+          tryNext();
+        };
+        document.head.appendChild(script);
+      }
+      tryNext();
     });
   }
 
@@ -707,7 +754,11 @@ export function PreviewModal({
     if (!isSheet || !url) return;
     let cancelled = false;
     const controller = new AbortController();
-    loadScript("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js")
+    loadScript([
+      "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",
+      "https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"
+    ], "XLSX")
       .then(() => fetch(url, { signal: controller.signal }))
       .then((r) => r.arrayBuffer())
       .then((buffer) => {
@@ -747,8 +798,15 @@ export function PreviewModal({
     const controller = new AbortController();
     const container = docxContainerRef.current;
     setLoadingDocx(true);
-    loadScript("https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js")
-      .then(() => loadScript("https://cdn.jsdelivr.net/npm/docx-preview@0.1.15/dist/docx-preview.min.js"))
+    loadScript([
+      "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js",
+      "https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"
+    ], "JSZip")
+      .then(() => loadScript([
+        "https://cdn.jsdelivr.net/npm/docx-preview@0.1.15/dist/docx-preview.min.js",
+        "https://unpkg.com/docx-preview@0.1.15/dist/docx-preview.min.js"
+      ], "docx"))
       .then(() => fetch(url, { signal: controller.signal }))
       .then((r) => r.blob())
       .then((blob) => {
@@ -928,11 +986,37 @@ export function PreviewModal({
     const container = epubContainerRef.current;
     setLoadingEpub(true);
     setEpubError(null);
+    setEpubToc([]);
+    setEpubCurrentChapterRef("");
+    setEpubProgress("0%");
+
+    const handleResize = () => {
+      if (renditionRef.current) {
+        try {
+          renditionRef.current.resize();
+        } catch {}
+      }
+    };
+    window.addEventListener("resize", handleResize);
     
-    loadScript("https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js")
-      .then(() => loadScript("https://cdnjs.cloudflare.com/ajax/libs/epub.js/0.3.88/epub.min.js"))
+    loadScript([
+      "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js",
+      "https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"
+    ], "JSZip")
+      .then(() => loadScript([
+        "https://cdn.jsdelivr.net/npm/epubjs@0.3.88/dist/epub.min.js",
+        "https://unpkg.com/epubjs@0.3.88/dist/epub.min.js",
+        "https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js",
+        "https://unpkg.com/epubjs@0.3.93/dist/epub.min.js"
+      ], "ePub"))
       .then(() => fetch(url, { signal: controller.signal }))
-      .then((r) => r.arrayBuffer())
+      .then((r) => {
+        if (!r.ok) {
+          throw new Error(`Failed to fetch book content (HTTP ${r.status})`);
+        }
+        return r.arrayBuffer();
+      })
       .then((buffer) => {
         if (cancelled || !container) return;
         const ePub = window.ePub;
@@ -949,28 +1033,115 @@ export function PreviewModal({
         
         renditionRef.current = rendition;
         
-        rendition.themes.default({
+        // Register beautiful reading themes
+        rendition.themes.register("dark", {
           body: {
-            background: "transparent !important",
+            background: "#121214 !important",
             color: "#e2e8f0 !important",
             "font-family": "'Outfit', sans-serif !important",
-            "line-height": "1.75 !important",
+            "line-height": "1.8 !important",
             "font-size": "16px !important",
-            padding: "0 20px !important"
+            padding: "0 30px !important"
           },
-          p: {
-            "margin-bottom": "1rem !important"
-          },
-          h1: {
-            color: "#ffffff !important",
-            "font-weight": "700 !important"
-          },
-          h2: {
-            color: "#ffffff !important",
-            "font-weight": "600 !important"
-          }
+          p: { "margin-bottom": "1.25rem !important", "text-align": "justify !important" },
+          h1: { color: "#ffffff !important", "font-weight": "700 !important", "margin-top": "2rem !important", "margin-bottom": "1rem !important" },
+          h2: { color: "#ffffff !important", "font-weight": "600 !important", "margin-top": "1.75rem !important", "margin-bottom": "0.75rem !important" }
         });
         
+        rendition.themes.register("light", {
+          body: {
+            background: "#ffffff !important",
+            color: "#18181b !important",
+            "font-family": "'Outfit', sans-serif !important",
+            "line-height": "1.8 !important",
+            "font-size": "16px !important",
+            padding: "0 30px !important"
+          },
+          p: { "margin-bottom": "1.25rem !important", "text-align": "justify !important" },
+          h1: { color: "#09090b !important", "font-weight": "700 !important", "margin-top": "2rem !important", "margin-bottom": "1rem !important" },
+          h2: { color: "#09090b !important", "font-weight": "600 !important", "margin-top": "1.75rem !important", "margin-bottom": "0.75rem !important" }
+        });
+        
+        rendition.themes.register("sepia", {
+          body: {
+            background: "#f4ecd8 !important",
+            color: "#5c4033 !important",
+            "font-family": "'Outfit', sans-serif !important",
+            "line-height": "1.8 !important",
+            "font-size": "16px !important",
+            padding: "0 30px !important"
+          },
+          p: { "margin-bottom": "1.25rem !important", "text-align": "justify !important" },
+          h1: { color: "#3d2b1f !important", "font-weight": "700 !important", "margin-top": "2rem !important", "margin-bottom": "1rem !important" },
+          h2: { color: "#3d2b1f !important", "font-weight": "600 !important", "margin-top": "1.75rem !important", "margin-bottom": "0.75rem !important" }
+        });
+        
+        rendition.themes.register("cream", {
+          body: {
+            background: "#faf6ee !important",
+            color: "#2d241e !important",
+            "font-family": "'Outfit', sans-serif !important",
+            "line-height": "1.8 !important",
+            "font-size": "16px !important",
+            padding: "0 30px !important"
+          },
+          p: { "margin-bottom": "1.25rem !important", "text-align": "justify !important" },
+          h1: { color: "#1c140e !important", "font-weight": "700 !important", "margin-top": "2rem !important", "margin-bottom": "1rem !important" },
+          h2: { color: "#1c140e !important", "font-weight": "600 !important", "margin-top": "1.75rem !important", "margin-bottom": "0.75rem !important" }
+        });
+        
+        // Select initial style settings
+        rendition.themes.select(epubTheme);
+        rendition.themes.fontSize(`${epubFontSize}%`);
+        
+        // Load TOC navigation
+        if (book.loaded && book.loaded.navigation) {
+          book.loaded.navigation.then((nav: any) => {
+            if (cancelled) return;
+            const tocItems = (nav && nav.toc) ? nav.toc : (Array.isArray(nav) ? nav : []);
+            const flattenToc = (items: any[]): any[] => {
+              let result: any[] = [];
+              items.forEach((item) => {
+                result.push({
+                  label: item.label ? item.label.trim() : "Untitled Chapter",
+                  href: item.href
+                });
+                if (item.subitems && item.subitems.length > 0) {
+                  result = result.concat(flattenToc(item.subitems));
+                }
+              });
+              return result;
+            };
+            setEpubToc(flattenToc(tocItems));
+          }).catch((err: any) => {
+            console.warn("Failed to load navigation:", err);
+          });
+        }
+
+        // Handle location relocation progress & current chapter updates
+        rendition.on("relocated", (location: any) => {
+          if (cancelled) return;
+          if (location && location.start) {
+            const percentage = location.start.percentage;
+            setEpubProgress(`${Math.round(percentage * 100)}%`);
+            if (location.start.href) {
+              setEpubCurrentChapterRef(location.start.href);
+            }
+          }
+        });
+
+        // Generate locations for progress bar accuracy (non-blocking)
+        if (book.ready) {
+          book.ready.then(() => {
+            if (cancelled) return;
+            if (book.locations) {
+              book.locations.generate(1000).catch(() => {});
+            }
+          }).catch((err: any) => {
+            console.warn("Book ready failed:", err);
+          });
+        }
+
         return rendition.display();
       })
       .then(() => {
@@ -989,6 +1160,7 @@ export function PreviewModal({
     return () => {
       cancelled = true;
       controller.abort();
+      window.removeEventListener("resize", handleResize);
       if (renditionRef.current) {
         try {
           renditionRef.current.destroy();
@@ -999,6 +1171,43 @@ export function PreviewModal({
       }
     };
   }, [isEpub, url]);
+
+  useEffect(() => {
+    if (!isEpub) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.getAttribute("contenteditable") === "true")) {
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        renditionRef.current?.prev();
+      } else if (e.key === "ArrowRight") {
+        renditionRef.current?.next();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isEpub]);
+
+  useEffect(() => {
+    if (renditionRef.current) {
+      try {
+        renditionRef.current.themes.select(epubTheme);
+      } catch (err) {
+        console.warn("Failed to apply EPUB theme:", err);
+      }
+    }
+  }, [epubTheme]);
+
+  useEffect(() => {
+    if (renditionRef.current) {
+      try {
+        renditionRef.current.themes.fontSize(`${epubFontSize}%`);
+      } catch (err) {
+        console.warn("Failed to apply EPUB font size:", err);
+      }
+    }
+  }, [epubFontSize]);
 
   /* ═══════════════════════════════════════════════════════
      LOADING FLAGS
@@ -1013,6 +1222,39 @@ export function PreviewModal({
 
   const fileDate = new Date(file.date * 1000);
   const fileDateStr = fileDate.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+
+  /* ═══════════════════════════════════════════════════════
+     EPUB THEME STYLES MAP
+     ═══════════════════════════════════════════════════════ */
+
+  const themeStyles: Record<string, { bg: string; text: string; selectBg: string; border: string }> = {
+    dark: {
+      bg: "bg-[#121214]",
+      text: "text-[#e2e8f0]",
+      selectBg: "bg-[#18181b]",
+      border: "border-white/[0.06]"
+    },
+    light: {
+      bg: "bg-[#ffffff]",
+      text: "text-[#18181b]",
+      selectBg: "bg-[#f4f4f5]",
+      border: "border-black/[0.08]"
+    },
+    sepia: {
+      bg: "bg-[#f4ecd8]",
+      text: "text-[#5c4033]",
+      selectBg: "bg-[#eae0c6]",
+      border: "border-[#e0d4b8]"
+    },
+    cream: {
+      bg: "bg-[#faf6ee]",
+      text: "text-[#2d241e]",
+      selectBg: "bg-[#f0e6d6]",
+      border: "border-[#e6dcbf]"
+    }
+  };
+
+  const currentThemeStyle = themeStyles[epubTheme] || themeStyles.dark;
 
   /* ═══════════════════════════════════════════════════════
      RENDER
@@ -1777,43 +2019,142 @@ export function PreviewModal({
                   EPUB PREVIEW
                   ══════════════════════════════════════════ */}
               {isEpub && (
-                <div className="w-full h-full max-w-4xl mx-auto p-2 sm:p-4 flex flex-col relative">
+                <div className="w-full h-full max-w-4xl mx-auto p-2 sm:p-4 flex flex-col relative animate-fade-in select-none">
                   {loadingEpub && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10 gap-3">
-                      <svg className="animate-spin h-5 w-5 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <circle cx="12" cy="12" r="10" strokeWidth={4} className="opacity-25" />
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20 gap-3 rounded-2xl">
+                      <svg className="animate-spin h-6 w-6 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <circle cx="12" cy="12" r="10" strokeWidth={3.5} className="opacity-25" />
                         <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" className="opacity-75" />
                       </svg>
-                      <span className="text-white/40 text-sm">Loading book pages...</span>
+                      <span className="text-white/50 text-xs font-semibold tracking-wider">PREPARING PAGES...</span>
                     </div>
                   )}
                   {epubError ? (
-                    <div className="flex-1 flex flex-col items-center justify-center gap-3">
-                      <svg className="w-12 h-12 text-danger/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-[#121214] border border-white/[0.06] rounded-2xl">
+                      <svg className="w-12 h-12 text-danger/60 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                       </svg>
                       <p className="text-white font-semibold">{epubError}</p>
                     </div>
                   ) : (
-                    <div className="flex-1 flex flex-col overflow-hidden bg-[#121214] border border-white/[0.06] rounded-2xl relative shadow-2xl p-4">
-                      <div ref={epubContainerRef} className="flex-1 w-full overflow-hidden text-white" />
+                    <div className={`flex-1 flex flex-col overflow-hidden ${currentThemeStyle.bg} border ${currentThemeStyle.border} rounded-2xl relative shadow-2xl transition-all duration-300`}>
                       
-                      {/* Pagination buttons */}
-                      <div className="flex items-center justify-between border-t border-white/[0.06] pt-3 mt-3 px-4 shrink-0">
+                      {/* Premium Top Toolbar */}
+                      <div className={`flex items-center justify-between border-b ${currentThemeStyle.border} px-4 py-2.5 shrink-0 gap-3`}>
+                        {/* Left: TOC Dropdown */}
+                        {epubToc.length > 0 ? (
+                          <div className="flex items-center gap-2 max-w-[50%] sm:max-w-[60%]">
+                            <svg className={`w-3.5 h-3.5 opacity-60 ${currentThemeStyle.text}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                            </svg>
+                            <select
+                              value={epubCurrentChapterRef}
+                              onChange={(e) => {
+                                setEpubCurrentChapterRef(e.target.value);
+                                renditionRef.current?.display(e.target.value);
+                              }}
+                              className={`text-[11px] font-semibold tracking-wide ${currentThemeStyle.text} bg-transparent border-0 cursor-pointer focus:outline-none max-w-[140px] sm:max-w-[280px] truncate`}
+                            >
+                              {epubToc.map((chapter, idx) => (
+                                <option key={idx} value={chapter.href} className="bg-[#18181b] text-white">
+                                  {chapter.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ) : (
+                          <span className={`text-[10px] font-bold tracking-widest uppercase opacity-40 select-none ${currentThemeStyle.text}`}>
+                            EPUB eBook Reader
+                          </span>
+                        )}
+
+                        {/* Right: Font Settings & Themes */}
+                        <div className="flex items-center gap-3">
+                          {/* Font controls */}
+                          <div className={`flex items-center bg-black/[0.04] dark:bg-white/[0.04] border ${currentThemeStyle.border} p-0.5 rounded-lg`}>
+                            <button
+                              onClick={() => setEpubFontSize(prev => Math.max(70, prev - 10))}
+                              disabled={epubFontSize <= 70}
+                              className={`w-6 h-6 text-[10px] font-bold flex items-center justify-center rounded hover:bg-black/[0.05] dark:hover:bg-white/[0.05] disabled:opacity-20 active:scale-95 transition-all cursor-pointer ${currentThemeStyle.text}`}
+                            >
+                              A-
+                            </button>
+                            <span className={`text-[9px] font-bold px-1.5 min-w-[32px] text-center opacity-70 ${currentThemeStyle.text}`}>{epubFontSize}%</span>
+                            <button
+                              onClick={() => setEpubFontSize(prev => Math.min(180, prev + 10))}
+                              disabled={epubFontSize >= 180}
+                              className={`w-6 h-6 text-[10px] font-bold flex items-center justify-center rounded hover:bg-black/[0.05] dark:hover:bg-white/[0.05] disabled:opacity-20 active:scale-95 transition-all cursor-pointer ${currentThemeStyle.text}`}
+                            >
+                              A+
+                            </button>
+                          </div>
+
+                          {/* Theme circles */}
+                          <div className="flex items-center gap-1">
+                            {(["light", "cream", "sepia", "dark"] as const).map((t) => (
+                              <button
+                                key={t}
+                                onClick={() => setEpubTheme(t)}
+                                className={`w-5 h-5 rounded-full border transition-all relative cursor-pointer active:scale-90 ${
+                                  epubTheme === t
+                                    ? "ring-1.5 ring-brand-400 border-transparent scale-110"
+                                    : "border-black/10 dark:border-white/10 hover:scale-105"
+                                }`}
+                                style={{
+                                  backgroundColor: t === "light" ? "#ffffff" : t === "cream" ? "#faf6ee" : t === "sepia" ? "#f4ecd8" : "#121214"
+                                }}
+                                title={`${t.charAt(0).toUpperCase() + t.slice(1)} Theme`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Viewport Frame with Floating Side-Paginators */}
+                      <div className="flex-1 w-full relative flex items-center justify-between p-2 sm:p-4 overflow-hidden">
+                        
+                        {/* Floating Left Arrow */}
                         <button
                           onClick={() => renditionRef.current?.prev()}
-                          className="px-4 py-2 text-xs font-bold text-white/70 hover:text-white bg-white/[0.06] hover:bg-white/[0.1] rounded-xl active:scale-95 transition-all cursor-pointer"
+                          className={`absolute left-4 z-15 w-10 h-10 rounded-full flex items-center justify-center bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 active:scale-95 border ${currentThemeStyle.border} ${currentThemeStyle.text} transition-all shadow-md group cursor-pointer hidden md:flex`}
                         >
-                          Previous Page
+                          <svg className="w-4 h-4 translate-x-[-1px] group-hover:-translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                          </svg>
                         </button>
-                        <span className="text-[10px] text-white/30 font-bold uppercase tracking-wider select-none">
-                          EPUB Ebook Reader
-                        </span>
+
+                        {/* Reading iframe container */}
+                        <div ref={epubContainerRef} className="flex-1 h-full w-full overflow-hidden px-4 md:px-12" />
+
+                        {/* Floating Right Arrow */}
                         <button
                           onClick={() => renditionRef.current?.next()}
-                          className="px-4 py-2 text-xs font-bold text-white/70 hover:text-white bg-white/[0.06] hover:bg-white/[0.1] rounded-xl active:scale-95 transition-all cursor-pointer"
+                          className={`absolute right-4 z-15 w-10 h-10 rounded-full flex items-center justify-center bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 active:scale-95 border ${currentThemeStyle.border} ${currentThemeStyle.text} transition-all shadow-md group cursor-pointer hidden md:flex`}
                         >
-                          Next Page
+                          <svg className="w-4 h-4 translate-x-[1px] group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
+                      </div>
+
+                      {/* Sleek Bottom Pagination Bar */}
+                      <div className={`flex items-center justify-between border-t ${currentThemeStyle.border} pt-3 mt-auto pb-1.5 px-4 shrink-0`}>
+                        <button
+                          onClick={() => renditionRef.current?.prev()}
+                          className={`px-3 py-1.5 text-xs font-bold ${currentThemeStyle.text} bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 rounded-lg active:scale-95 transition-all cursor-pointer flex md:hidden`}
+                        >
+                          Previous
+                        </button>
+
+                        <div className={`text-[10px] font-bold opacity-45 uppercase tracking-wider mx-auto select-none ${currentThemeStyle.text}`}>
+                          {epubProgress !== "0%" ? `Progress: ${epubProgress}` : "eBook Preview"}
+                        </div>
+
+                        <button
+                          onClick={() => renditionRef.current?.next()}
+                          className={`px-3 py-1.5 text-xs font-bold ${currentThemeStyle.text} bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 rounded-lg active:scale-95 transition-all cursor-pointer flex md:hidden`}
+                        >
+                          Next
                         </button>
                       </div>
                     </div>

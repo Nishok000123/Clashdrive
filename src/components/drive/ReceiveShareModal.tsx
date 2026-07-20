@@ -152,6 +152,9 @@ export function ReceiveShareModal({
         if (onSuccess) {
           onSuccess(selectedTopicId);
         }
+        setTimeout(() => {
+          onClose();
+        }, 1500);
       } else {
         setError(result.error || "Failed to send file via Telegram Bot.");
       }
