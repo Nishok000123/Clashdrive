@@ -602,7 +602,7 @@ export default function App() {
           // chunk 0 will already be in memory cache → instant playback start.
           const fileId = file.id.toString();
           Promise.all([
-            downloadChunkToCache(client, driveConfig, fileId, file.manifest, 0).catch((err) => {
+            downloadChunkToCache(client, driveConfig, fileId, file.manifest, 0, 2 * 1024 * 1024).catch((err) => {
               console.warn("Chunk 0 pre-cache failed; stream will fetch on demand:", err);
             }),
             preFetchMessages(client, driveConfig, file.manifest).catch((err) => {
