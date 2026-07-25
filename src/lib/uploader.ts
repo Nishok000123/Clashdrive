@@ -166,12 +166,12 @@ function getDynamicUploadConcurrency() {
   const cores = navigator.hardwareConcurrency || 4;
 
   if (cores >= 12) {
-    return { segments: 4, workers: 16 };
+    return { segments: 4, workers: 24 };
   }
   if (cores >= 8) {
-    return { segments: 3, workers: 12 };
+    return { segments: 3, workers: 20 };
   }
-  return { segments: 2, workers: 8 };
+  return { segments: 2, workers: 16 };
 }
 
 /**
@@ -193,7 +193,7 @@ async function uploadChunk(
     `${fileName}.part${String(partIndex).padStart(4, "0")}`
   );
 
-  const idealWorkers = Math.min(workersLimit, Math.max(6, Math.ceil(blob.size / (1024 * 1024 * 1.5))));
+  const idealWorkers = Math.min(workersLimit, Math.max(12, Math.ceil(blob.size / (1024 * 1024 * 1.5))));
 
   const uploaded = await client.uploadFile({
     file: fileToUpload,

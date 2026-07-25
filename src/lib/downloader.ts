@@ -1235,7 +1235,7 @@ export async function downloadFile(
             throw new DOMException("Download aborted", "AbortError");
           }
           try {
-            const activeClient = await getHelperClient(index % 3);
+            const activeClient = await getHelperClient(index % 6);
             const buffer = await downloadMediaWithWorkers(activeClient, message, {
               workers: workers,
               progressCallback: (dl) => {
@@ -1309,7 +1309,7 @@ export async function downloadFile(
             throw new DOMException("Download aborted", "AbortError");
           }
           try {
-            const activeClient = await getHelperClient(index % 3);
+            const activeClient = await getHelperClient(index % 6);
             const buffer = await downloadMediaWithWorkers(activeClient, message, {
               workers: workers,
               progressCallback: (dl) => {
