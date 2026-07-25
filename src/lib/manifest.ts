@@ -57,19 +57,12 @@ export function buildManifest(
   return JSON.stringify(manifest);
 }
 
-/**
- * Determine effective chunk size for a file manifest.
- * Fallback dynamically for legacy manifests without chunkSize.
- */
 export function getFileChunkSize(manifest: ChunkManifest): number {
   if (manifest.chunkSize && manifest.chunkSize > 0) {
     return manifest.chunkSize;
   }
-  if (!manifest.chunks || manifest.chunks.length <= 1) {
-    return 50 * 1024 * 1024;
-  }
-  const estimated = Math.ceil(manifest.fileSize / (manifest.chunks.length - 1));
-  return estimated > 0 ? estimated : 50 * 1024 * 1024;
+  // All legacy files uploaded prior to dynamic chunking used fixed 50 MB (52,428,800 bytes) chunks
+  return 50 * 1024 * 1024;
 }
 
 
