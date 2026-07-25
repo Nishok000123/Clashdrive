@@ -17,7 +17,7 @@ async function loadZipFast(file: File | Blob): Promise<JSZip> {
 }
 
 /**
- * Ranks icon path candidates so custom app logos (logo.png, app_logo.png, ic_logo.png, app.png)
+ * Ranks icon path candidates so custom app logos (logo.png, app_logo.png, ic_logo.png)
  * take top priority over default generic Android Studio template icons (ic_launcher.png).
  */
 function rankIconPaths(paths: string[]): string[] {
@@ -26,13 +26,11 @@ function rankIconPaths(paths: string[]): string[] {
       const name = path.split("/").pop()?.toLowerCase() ?? "";
       let score = 0;
 
-      // Higher resolution density folders get extra weight
       if (path.includes("xxxhdpi")) score += 40;
       else if (path.includes("xxhdpi")) score += 30;
       else if (path.includes("xhdpi")) score += 20;
       else if (path.includes("hdpi")) score += 10;
 
-      // Custom app logos and non-template icons get top priority (+100)
       if (/logo|app_logo|ic_logo|custom|main_icon|app_icon|splash|app\./i.test(name)) score += 100;
       else if (/ic_launcher_round/i.test(name)) score += 15;
       else if (/ic_launcher/i.test(name)) score += 5;
@@ -44,213 +42,7 @@ function rankIconPaths(paths: string[]): string[] {
 }
 
 /**
- * Parses Android Vector XML (<vector>) and converts it into standard SVG markup.
- */
-export function convertVectorXmlToSvg(xmlText: string): string {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(xmlText, "text/xml");
-  const vector = doc.querySelector("vector");
-  if (!vector) throw new Error("Not a valid Android vector XML");
-
-  const vWidth = vector.getAttribute("android:viewportWidth") || "24";
-  const vHeight = vector.getAttribute("android:viewportHeight") || "24";
-  const width = vector.getAttribute("android:width")?.replace("dp", "").replace("px", "") || "192";
-  const height = vector.getAttribute("android:height")?.replace("dp", "").replace("px", "") || "192";
-
-  const pathNodes = doc.querySelectorAll("path");
-  let svgPaths = "";
-
-  pathNodes.forEach((path) => {
-    const pathData = path.getAttribute("android:pathData");
-    if (!pathData) return;
-
-    let fillColor = path.getAttribute("android:fillColor") || "#000000";
-    if (fillColor.startsWith("#") && fillColor.length === 9) {
-      const alpha = fillColor.substring(1, 3);
-      const rgb = fillColor.substring(3);
-      fillColor = `#${rgb}${alpha}`;
-    }
-
-    const strokeColor = path.getAttribute("android:strokeColor");
-    const strokeWidth = path.getAttribute("android:strokeWidth") || "0";
-
-    let strokeAttr = "";
-    if (strokeColor && strokeColor !== "@null") {
-      let sc = strokeColor;
-      if (sc.startsWith("#") && sc.length === 9) {
-        sc = `#${sc.substring(3)}${sc.substring(1, 3)}`;
-      }
-      strokeAttr = `stroke="${sc}" stroke-width="${strokeWidth}"`;
-    }
-
-    svgPaths += `<path d="${pathData}" fill="${fillColor}" ${strokeAttr} />`;
-  });
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${vWidth} ${vHeight}" width="${width}" height="${height}">${svgPaths}</svg>`;
-}
-
-/**
- * Renders an SVG string to a JPEG/PNG thumbnail Blob using an offscreen Canvas.
- */
-function renderSvgToThumbnail(svgString: string): Promise<Blob> {
-  return new Promise<Blob>((resolve, reject) => {
-    const img = new Image();
-    const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(svgBlob);
-
-    img.onload = () => {
-      try {
-        const canvas = document.createElement("canvas");
-        const size = Math.max(img.width || 192, img.height || 192);
-        canvas.width = size;
-        canvas.height = size;
-
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          URL.revokeObjectURL(url);
-          reject(new Error("Failed to get 2D context"));
-          return;
-        }
-
-        // Fill background with clean white context to prevent transparent SVG vectors from turning black
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, size, size);
-
-        ctx.drawImage(img, 0, 0, size, size);
-        canvas.toBlob((blob) => {
-          URL.revokeObjectURL(url);
-          if (blob) resolve(generateImageThumbnail(blob));
-          else reject(new Error("Canvas toBlob failed"));
-        }, "image/png");
-      } catch (err) {
-        URL.revokeObjectURL(url);
-        reject(err);
-      }
-    };
-
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Failed to load SVG into Image element"));
-    };
-
-    img.src = url;
-  });
-}
-
-/**
- * Resolves an XML drawable file (supporting both <vector> and Android 8+ <adaptive-icon>).
- */
-async function resolveXmlDrawable(xmlText: string, zip: JSZip): Promise<Blob> {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(xmlText, "text/xml");
-
-  if (doc.querySelector("vector")) {
-    const svgString = convertVectorXmlToSvg(xmlText);
-    return await renderSvgToThumbnail(svgString);
-  }
-
-  const adaptiveIcon = doc.querySelector("adaptive-icon");
-  if (adaptiveIcon) {
-    const fg = doc.querySelector("foreground")?.getAttribute("android:drawable");
-    const bg = doc.querySelector("background")?.getAttribute("android:drawable");
-    const targetName = fg || bg;
-
-    if (targetName) {
-      const cleanName = targetName.split("/").pop()?.replace("@", "") ?? "";
-      if (cleanName) {
-        const match = Object.keys(zip.files).find(
-          (fn) => !zip.files[fn].dir && fn.includes(cleanName) && !fn.endsWith(".9.png")
-        );
-
-        if (match) {
-          if (match.endsWith(".xml")) {
-            const innerXml = await zip.files[match].async("text");
-            return await resolveXmlDrawable(innerXml, zip);
-          } else {
-            const blob = await zip.files[match].async("blob");
-            return await generateImageThumbnail(blob);
-          }
-        }
-      }
-    }
-  }
-
-  throw new Error("Unsupported XML drawable format");
-}
-
-/**
- * Extracts strings from AAPT2 Binary AndroidManifest.xml string pool.
- */
-function extractStringsFromBinaryXml(buffer: ArrayBuffer): string[] {
-  const view = new DataView(buffer);
-  const strings: string[] = [];
-
-  try {
-    if (buffer.byteLength < 16) return strings;
-    const magic = view.getUint16(0, true);
-    if (magic !== 0x0003) return strings;
-
-    let offset = 8;
-    while (offset < buffer.byteLength - 8) {
-      const chunkType = view.getUint16(offset, true);
-      const chunkSize = view.getUint32(offset + 4, true);
-
-      if (chunkType === 0x0001) {
-        const stringCount = view.getUint32(offset + 8, true);
-        const flags = view.getUint32(offset + 16, true);
-        const stringsStart = offset + view.getUint32(offset + 20, true);
-        const isUtf8 = (flags & (1 << 8)) !== 0;
-
-        for (let i = 0; i < stringCount; i++) {
-          const stringOffset = view.getUint32(offset + 28 + i * 4, true);
-          const strPos = stringsStart + stringOffset;
-
-          if (strPos >= buffer.byteLength) continue;
-
-          let str = "";
-          if (isUtf8) {
-            let uOffset = strPos;
-            while (uOffset < buffer.byteLength && (view.getUint8(uOffset) & 0x80) !== 0) uOffset++;
-            uOffset++;
-            let uLenEnd = uOffset;
-            while (uLenEnd < buffer.byteLength && (view.getUint8(uLenEnd) & 0x80) !== 0) uLenEnd++;
-            uLenEnd++;
-            let strBytes: number[] = [];
-            while (uLenEnd < buffer.byteLength && view.getUint8(uLenEnd) !== 0) {
-              strBytes.push(view.getUint8(uLenEnd));
-              uLenEnd++;
-            }
-            str = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(strBytes));
-          } else {
-            const u16Len = view.getUint16(strPos, true);
-            let charCodes: number[] = [];
-            for (let c = 0; c < u16Len; c++) {
-              const charPos = strPos + 2 + c * 2;
-              if (charPos + 1 < buffer.byteLength) {
-                charCodes.push(view.getUint16(charPos, true));
-              }
-            }
-            str = String.fromCharCode(...charCodes);
-          }
-
-          if (str && str.trim().length > 0) {
-            strings.push(str.trim());
-          }
-        }
-        break;
-      }
-      offset += chunkSize > 0 ? chunkSize : 4;
-    }
-  } catch (e) {
-    // Ignore binary XML parse errors
-  }
-
-  return strings;
-}
-
-/**
- * 100% Universal APK/APKS/XAPK/APKM thumbnail generator.
- * Prioritizes real custom app logos (logo.png, app_logo.png) over default generic template icons (ic_launcher.png).
+ * Extracts authentic raster image icons (PNG, WebP, JPEG) from APK / APKS / XAPK packages.
  */
 export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
   let zip = await loadZipFast(file);
@@ -281,44 +73,8 @@ export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
     }
 
     const fileKeys = Object.keys(currentZip.files).filter((fn) => !currentZip.files[fn].dir);
-
-    // 3. Try parsing AndroidManifest.xml string pool for exact resource paths
-    const manifestEntry = currentZip.files["AndroidManifest.xml"];
-    if (manifestEntry) {
-      try {
-        const manifestBuffer = await manifestEntry.async("arraybuffer");
-        const strings = extractStringsFromBinaryXml(manifestBuffer);
-        const iconPaths = strings.filter(
-          (s) => /^res\/(?:mipmap|drawable).*\.(png|webp|xml)$/i.test(s) && !s.endsWith(".9.png")
-        );
-
-        const rankedManifestPaths = rankIconPaths(iconPaths);
-
-        for (const path of rankedManifestPaths) {
-          if (currentZip.files[path] && !currentZip.files[path].dir) {
-            try {
-              if (path.endsWith(".xml")) {
-                const xmlText = await currentZip.files[path].async("text");
-                return await resolveXmlDrawable(xmlText, currentZip);
-              } else {
-                const iconBlob = await currentZip.files[path].async("blob");
-                return await generateImageThumbnail(iconBlob);
-              }
-            } catch (err) {
-              // Try next manifest string
-            }
-          }
-        }
-      } catch (err) {
-        // Continue
-      }
-    }
-
-    // 4. Pattern matching across zip entries
-    const isImageFile = (fn: string) =>
+    const isRasterImage = (fn: string) =>
       /\.(png|webp|jpg|jpeg)$/i.test(fn) && !fn.endsWith(".9.png");
-    const isVectorXml = (fn: string) =>
-      /\.xml$/i.test(fn) && /res\/(?:mipmap|drawable)/i.test(fn);
 
     let candidateKeys: string[] = [];
 
@@ -336,33 +92,22 @@ export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
 
     for (const pattern of fullIconPatterns) {
       const found = fileKeys.filter(
-        (fn) => isImageFile(fn) && !/_foreground|_background/i.test(fn) && pattern.test(fn)
+        (fn) => isRasterImage(fn) && !/_foreground|_background/i.test(fn) && pattern.test(fn)
       );
       candidateKeys.push(...found);
     }
 
-    // Secondary icon candidates
     const secondary = fileKeys.filter(
       (fn) =>
-        isImageFile(fn) &&
+        isRasterImage(fn) &&
         !candidateKeys.includes(fn) &&
         !/_foreground|_background/i.test(fn) &&
         /res\/(?:mipmap|drawable)[^\/]*\/.*(?:launcher|icon|logo|avatar|app).*\.(png|webp)$/i.test(fn)
     );
     candidateKeys.push(...secondary);
 
-    // Vector XML candidates
-    const vectorCandidates = fileKeys.filter(
-      (fn) =>
-        isVectorXml(fn) &&
-        !candidateKeys.includes(fn) &&
-        /(?:ic_launcher|app_icon|icon|logo|app)\.xml$/i.test(fn)
-    );
-
-    // Rank candidate keys so real custom logos take top priority over generic ic_launcher boilerplate
     candidateKeys = rankIconPaths(candidateKeys);
 
-    // Try raster image candidates
     for (const key of candidateKeys) {
       try {
         const iconBlob = await currentZip.files[key].async("blob");
@@ -372,19 +117,9 @@ export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
       }
     }
 
-    // Try Vector / Adaptive XML candidates
-    for (const key of vectorCandidates) {
-      try {
-        const xmlText = await currentZip.files[key].async("text");
-        return await resolveXmlDrawable(xmlText, currentZip);
-      } catch (err) {
-        // Continue
-      }
-    }
-
-    // 5. Heuristic ranking for obfuscated APKs
+    // Heuristic ranking for obfuscated APKs
     const allResImages = fileKeys
-      .filter((fn) => isImageFile(fn) && /^res\//i.test(fn))
+      .filter((fn) => isRasterImage(fn) && /^res\//i.test(fn))
       .sort((a, b) => {
         const scoreA = /mipmap/i.test(a) ? 3 : /drawable/i.test(a) ? 2 : 1;
         const scoreB = /mipmap/i.test(b) ? 3 : /drawable/i.test(b) ? 2 : 1;
@@ -400,8 +135,8 @@ export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
       }
     }
 
-    // 6. Global image fallback
-    const globalImages = fileKeys.filter((fn) => isImageFile(fn));
+    // Global image search in zip
+    const globalImages = fileKeys.filter((fn) => isRasterImage(fn));
     for (const key of rankIconPaths(globalImages).slice(0, 25)) {
       try {
         const iconBlob = await currentZip.files[key].async("blob");
@@ -411,7 +146,7 @@ export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
       }
     }
 
-    throw new Error("No image entries found in archive");
+    throw new Error("No raster icon found in package");
   };
 
   try {
@@ -659,6 +394,10 @@ export async function generatePdfThumbnail(file: File | Blob): Promise<Blob> {
   if (!ctx) {
     throw new Error("Failed to get 2D context for PDF thumbnail canvas");
   }
+
+  // Draw white background
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, viewport.width, viewport.height);
 
   await page.render({ canvasContext: ctx, viewport }).promise;
 
