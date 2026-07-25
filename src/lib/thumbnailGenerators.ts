@@ -112,6 +112,10 @@ function renderSvgToThumbnail(svgString: string): Promise<Blob> {
           return;
         }
 
+        // Fill background with clean white context to prevent transparent SVG vectors from turning black
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, size, size);
+
         ctx.drawImage(img, 0, 0, size, size);
         canvas.toBlob((blob) => {
           URL.revokeObjectURL(url);
