@@ -292,7 +292,7 @@ export async function downloadChunkToCache(
     return cached.get(chunkIndex)!;
   }
 
-  // 2. Check IndexedDB persistent cache (only for full chunks)
+  // 2. Check in-memory chunk cache (only for full chunks)
   if (!limitBytes) {
     const persisted = await getCachedChunk(fileId, chunkIndex);
     if (persisted) {
@@ -365,7 +365,7 @@ export async function downloadChunkToCache(
 
       if (buffer && buffer.byteLength > 0) {
         const arr = new Uint8Array(buffer);
-        // Only write to memory cache and IndexedDB if it was a FULL chunk download
+        // Only write to memory cache if it was a FULL chunk download
         if (!limitBytes) {
           cached.set(chunkIndex, arr);
           if (chunkIndex === 0) {

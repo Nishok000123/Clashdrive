@@ -323,13 +323,6 @@ export function useAuth() {
 
   const clearCache = useCallback(async () => {
     await destroyClient();
-    if (typeof indexedDB !== "undefined") {
-      try {
-        indexedDB.deleteDatabase("clashdrive_cache");
-      } catch (e) {
-        console.warn("Failed to delete IndexedDB cache", e);
-      }
-    }
     localStorage.clear();
     sessionStorage.clear();
     setAccounts([]);

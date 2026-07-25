@@ -11,6 +11,18 @@ if (typeof globalThis !== "undefined") {
   (globalThis as any).Buffer = Buffer;
 }
 
+// Suppress internal GramJS debug alert calls (e.g., TypeNotFoundError during chunk uploads)
+if (typeof window !== "undefined") {
+  const originalAlert = window.alert;
+  window.alert = function (message?: any) {
+    if (typeof message === "string" && message.includes("Missing MTProto Entity")) {
+      console.warn("Suppressed GramJS alert:", message);
+      return;
+    }
+    originalAlert.apply(window, arguments as any);
+  };
+}
+
 // Override Symbol.hasInstance on Buffer to handle reference mismatches in different bundler contexts
 try {
   Object.defineProperty(Buffer, Symbol.hasInstance, {
