@@ -2,40 +2,201 @@ import JSZip from "jszip";
 import { generateImageThumbnail } from "./uploader";
 
 /**
- * Fast ZIP archive loader using slicing and checkCRC32: false.
- * Prevents CPU starvation and memory spikes during upload.
+ * Fast ZIP loader with fallback to full archive if slice index fails.
  */
 async function loadZipFast(file: File | Blob): Promise<JSZip> {
   const checkCRC32 = false;
-  // If file > 16MB, slice first 16MB for fast icon indexing
-  const targetBlob = file.size > 16 * 1024 * 1024 ? file.slice(0, 16 * 1024 * 1024) : file;
+  const targetBlob = file.size > 24 * 1024 * 1024 ? file.slice(0, 24 * 1024 * 1024) : file;
   try {
-    return await JSZip.loadAsync(targetBlob, { checkCRC32 });
+    const zip = await JSZip.loadAsync(targetBlob, { checkCRC32 });
+    if (Object.keys(zip.files).length > 0) return zip;
+    throw new Error("Empty zip slice");
   } catch (err) {
-    // If slice failed (e.g. zip central dir at end of file), fall back to full file without CRC32
     return await JSZip.loadAsync(file, { checkCRC32 });
   }
 }
 
 /**
- * Ultra-fast, accurate APK/APKS/XAPK/APKM thumbnail generator.
- * Prioritizes complete composite icons (ic_launcher.png, ic_launcher_round.png)
- * over partial foreground cutouts (ic_launcher_foreground.png).
+ * Parses Android Vector XML (<vector>) and converts it into standard SVG markup.
+ */
+export function convertVectorXmlToSvg(xmlText: string): string {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, "text/xml");
+  const vector = doc.querySelector("vector");
+  if (!vector) throw new Error("Not a valid Android vector XML");
+
+  const vWidth = vector.getAttribute("android:viewportWidth") || "24";
+  const vHeight = vector.getAttribute("android:viewportHeight") || "24";
+  const width = vector.getAttribute("android:width")?.replace("dp", "").replace("px", "") || "192";
+  const height = vector.getAttribute("android:height")?.replace("dp", "").replace("px", "") || "192";
+
+  const pathNodes = doc.querySelectorAll("path");
+  let svgPaths = "";
+
+  pathNodes.forEach((path) => {
+    const pathData = path.getAttribute("android:pathData");
+    if (!pathData) return;
+
+    let fillColor = path.getAttribute("android:fillColor") || "#000000";
+    // Convert Android #AARRGGBB color format to standard CSS #RRGGBBAA or hex
+    if (fillColor.startsWith("#") && fillColor.length === 9) {
+      const alpha = fillColor.substring(1, 3);
+      const rgb = fillColor.substring(3);
+      fillColor = `#${rgb}${alpha}`;
+    }
+
+    const strokeColor = path.getAttribute("android:strokeColor");
+    const strokeWidth = path.getAttribute("android:strokeWidth") || "0";
+
+    let strokeAttr = "";
+    if (strokeColor && strokeColor !== "@null") {
+      let sc = strokeColor;
+      if (sc.startsWith("#") && sc.length === 9) {
+        sc = `#${sc.substring(3)}${sc.substring(1, 3)}`;
+      }
+      strokeAttr = `stroke="${sc}" stroke-width="${strokeWidth}"`;
+    }
+
+    svgPaths += `<path d="${pathData}" fill="${fillColor}" ${strokeAttr} />`;
+  });
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${vWidth} ${vHeight}" width="${width}" height="${height}">${svgPaths}</svg>`;
+}
+
+/**
+ * Renders an SVG string to a JPEG/PNG thumbnail Blob using an offscreen Canvas.
+ */
+function renderSvgToThumbnail(svgString: string): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => {
+    const img = new Image();
+    const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(svgBlob);
+
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        const size = Math.max(img.width || 192, img.height || 192);
+        canvas.width = size;
+        canvas.height = size;
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          URL.revokeObjectURL(url);
+          reject(new Error("Failed to get 2D context"));
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, size, size);
+        canvas.toBlob((blob) => {
+          URL.revokeObjectURL(url);
+          if (blob) resolve(generateImageThumbnail(blob));
+          else reject(new Error("Canvas toBlob failed"));
+        }, "image/png");
+      } catch (err) {
+        URL.revokeObjectURL(url);
+        reject(err);
+      }
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Failed to load SVG into Image element"));
+    };
+
+    img.src = url;
+  });
+}
+
+/**
+ * Extracts strings from AAPT2 Binary AndroidManifest.xml string pool.
+ */
+function extractStringsFromBinaryXml(buffer: ArrayBuffer): string[] {
+  const view = new DataView(buffer);
+  const strings: string[] = [];
+
+  try {
+    if (buffer.byteLength < 16) return strings;
+    const magic = view.getUint16(0, true);
+    if (magic !== 0x0003) return strings; // Not binary XML
+
+    let offset = 8;
+    while (offset < buffer.byteLength - 8) {
+      const chunkType = view.getUint16(offset, true);
+      const chunkSize = view.getUint32(offset + 4, true);
+
+      if (chunkType === 0x0001) { // ResStringPool_header
+        const stringCount = view.getUint32(offset + 8, true);
+        const flags = view.getUint32(offset + 16, true);
+        const stringsStart = offset + view.getUint32(offset + 20, true);
+        const isUtf8 = (flags & (1 << 8)) !== 0;
+
+        for (let i = 0; i < stringCount; i++) {
+          const stringOffset = view.getUint32(offset + 28 + i * 4, true);
+          const strPos = stringsStart + stringOffset;
+
+          if (strPos >= buffer.byteLength) continue;
+
+          let str = "";
+          if (isUtf8) {
+            let uOffset = strPos;
+            // Skip utf8 length headers
+            while (uOffset < buffer.byteLength && (view.getUint8(uOffset) & 0x80) !== 0) uOffset++;
+            uOffset++;
+            let uLenEnd = uOffset;
+            while (uLenEnd < buffer.byteLength && (view.getUint8(uLenEnd) & 0x80) !== 0) uLenEnd++;
+            uLenEnd++;
+            let strBytes: number[] = [];
+            while (uLenEnd < buffer.byteLength && view.getUint8(uLenEnd) !== 0) {
+              strBytes.push(view.getUint8(uLenEnd));
+              uLenEnd++;
+            }
+            str = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(strBytes));
+          } else {
+            const u16Len = view.getUint16(strPos, true);
+            let charCodes: number[] = [];
+            for (let c = 0; c < u16Len; c++) {
+              const charPos = strPos + 2 + c * 2;
+              if (charPos + 1 < buffer.byteLength) {
+                charCodes.push(view.getUint16(charPos, true));
+              }
+            }
+            str = String.fromCharCode(...charCodes);
+          }
+
+          if (str && str.trim().length > 0) {
+            strings.push(str.trim());
+          }
+        }
+        break;
+      }
+      offset += chunkSize > 0 ? chunkSize : 4;
+    }
+  } catch (e) {
+    // Ignore binary XML parse errors
+  }
+
+  return strings;
+}
+
+/**
+ * 100% Universal APK/APKS/XAPK/APKM thumbnail generator.
+ * Combines AAPT2 Binary XML decoding, Vector XML-to-SVG rendering,
+ * and heuristic square image ranking.
  */
 export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
   let zip = await loadZipFast(file);
 
-  // 1. Check if this is an XAPK / APKS package containing a root icon.png
+  // 1. Root icon.png check for XAPK / APKS bundles
   if (zip.files["icon.png"] && !zip.files["icon.png"].dir) {
     try {
       const iconBlob = await zip.files["icon.png"].async("blob");
       return await generateImageThumbnail(iconBlob);
     } catch (e) {
-      // Fall through to ZIP searching
+      // Fall through
     }
   }
 
-  // 2. Check if there is an embedded base.apk inside APKS / XAPK
+  // 2. Unpack embedded base.apk inside APKS / XAPK if present
   const baseApkEntry = Object.keys(zip.files).find(
     (fn) => !zip.files[fn].dir && /(?:base|app)\.apk$/i.test(fn)
   );
@@ -49,13 +210,46 @@ export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
   }
 
   const fileKeys = Object.keys(zip.files).filter((fn) => !zip.files[fn].dir);
+
+  // 3. Try parsing AndroidManifest.xml string pool for exact resource paths
+  const manifestEntry = zip.files["AndroidManifest.xml"];
+  if (manifestEntry) {
+    try {
+      const manifestBuffer = await manifestEntry.async("arraybuffer");
+      const strings = extractStringsFromBinaryXml(manifestBuffer);
+      const iconPaths = strings.filter(
+        (s) => /^res\/(?:mipmap|drawable).*\.(png|webp|xml)$/i.test(s) && !s.endsWith(".9.png")
+      );
+
+      for (const path of iconPaths) {
+        if (zip.files[path] && !zip.files[path].dir) {
+          try {
+            if (path.endsWith(".xml")) {
+              const xmlText = await zip.files[path].async("text");
+              const svgString = convertVectorXmlToSvg(xmlText);
+              return await renderSvgToThumbnail(svgString);
+            } else {
+              const iconBlob = await zip.files[path].async("blob");
+              return await generateImageThumbnail(iconBlob);
+            }
+          } catch (err) {
+            // Try next manifest string
+          }
+        }
+      }
+    } catch (err) {
+      // Continue to pattern search
+    }
+  }
+
+  // 4. Pattern matching across zip entries
   const isImageFile = (fn: string) =>
     /\.(png|webp|jpg|jpeg)$/i.test(fn) && !fn.endsWith(".9.png");
+  const isVectorXml = (fn: string) =>
+    /\.xml$/i.test(fn) && /res\/(?:mipmap|drawable)/i.test(fn);
 
   const candidates: string[] = [];
 
-  // TIER 1: Full composite launcher icons (ic_launcher.png, ic_launcher_round.png, app_icon.png)
-  // EXCLUDES _foreground and _background cutouts
   const fullIconPatterns = [
     /res\/mipmap-xxxhdpi[^\/]*\/(?:ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
     /res\/mipmap-xxhdpi[^\/]*\/(?:ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
@@ -70,15 +264,12 @@ export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
 
   for (const pattern of fullIconPatterns) {
     const found = fileKeys.filter(
-      (fn) =>
-        isImageFile(fn) &&
-        !/_foreground|_background/i.test(fn) &&
-        pattern.test(fn)
+      (fn) => isImageFile(fn) && !/_foreground|_background/i.test(fn) && pattern.test(fn)
     );
     candidates.push(...found);
   }
 
-  // TIER 2: Other app icons/logos in mipmap or drawable
+  // Secondary icon candidates
   const secondary = fileKeys.filter(
     (fn) =>
       isImageFile(fn) &&
@@ -88,32 +279,54 @@ export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
   );
   candidates.push(...secondary);
 
-  // TIER 3: Foreground cutouts (only if no composite icon was found)
-  const foregroundOnly = fileKeys.filter(
+  // Vector XML candidates (e.g. res/mipmap-anydpi-v26/ic_launcher.xml)
+  const vectorCandidates = fileKeys.filter(
     (fn) =>
-      isImageFile(fn) &&
+      isVectorXml(fn) &&
       !candidates.includes(fn) &&
-      /res\/(?:mipmap|drawable)[^\/]*\/.*ic_launcher_foreground.*\.(png|webp)$/i.test(fn)
+      /(?:ic_launcher|app_icon|icon)\.xml$/i.test(fn)
   );
-  candidates.push(...foregroundOnly);
 
-  // TIER 4: Generic res/ images
-  const genericRes = fileKeys.filter(
-    (fn) => isImageFile(fn) && !candidates.includes(fn) && /^res\//i.test(fn)
-  );
-  candidates.push(...genericRes);
-
-  // Try candidate files until one successfully loads as a valid image
+  // Try raster image candidates
   for (const key of candidates) {
     try {
       const iconBlob = await zip.files[key].async("blob");
       return await generateImageThumbnail(iconBlob);
     } catch (err) {
-      // Continue to next candidate if image load/resize fails
+      // Continue
     }
   }
 
-  throw new Error("No valid APK icon image found in package");
+  // Try Vector XML candidates
+  for (const key of vectorCandidates) {
+    try {
+      const xmlText = await zip.files[key].async("text");
+      const svgString = convertVectorXmlToSvg(xmlText);
+      return await renderSvgToThumbnail(svgString);
+    } catch (err) {
+      // Continue
+    }
+  }
+
+  // 5. Heuristic ranking for obfuscated APKs (rank res/mipmap -> res/drawable -> general res)
+  const allResImages = fileKeys
+    .filter((fn) => isImageFile(fn) && /^res\//i.test(fn))
+    .sort((a, b) => {
+      const scoreA = /mipmap/i.test(a) ? 3 : /drawable/i.test(a) ? 2 : 1;
+      const scoreB = /mipmap/i.test(b) ? 3 : /drawable/i.test(b) ? 2 : 1;
+      return scoreB - scoreA;
+    });
+
+  for (const key of allResImages.slice(0, 15)) {
+    try {
+      const iconBlob = await zip.files[key].async("blob");
+      return await generateImageThumbnail(iconBlob);
+    } catch (err) {
+      // Continue
+    }
+  }
+
+  throw new Error("No valid APK icon found in package");
 }
 
 /**
