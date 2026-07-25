@@ -42,7 +42,7 @@ async function handleStream(request) {
         resolved = true;
         resolve(new Response("Stream timed out", { status: 504 }));
       }
-    }, 15000);
+    }, 60000);
 
     const stream = new ReadableStream({
       start(controller) {

@@ -765,6 +765,17 @@ export async function handleStreamRequest(
     const fileChunkSize = getFileChunkSize(file.manifest);
     const firstMsgChunkIdx = Math.floor((isDsfFile ? dsdStartOffset : alignedStart) / fileChunkSize);
 
+    // Send HEADER immediately so Service Worker and browser receive HTTP headers instantly
+    port.postMessage({
+      type: "HEADER",
+      status: hasRange ? 206 : 200,
+      start,
+      end,
+      totalSize: isDsfFile ? wavTotalSize : file.size,
+      contentLength,
+      mimeType: isDsfFile ? "audio/wav" : mimeType,
+    });
+
     // Pre-warm target DC connection before initiating the stream loop
     if (file.manifest.chunks.length > 0) {
       try {
@@ -784,16 +795,6 @@ export async function handleStreamRequest(
         console.warn("Failed to pre-warm stream sender connection:", err);
       }
     }
-
-    port.postMessage({
-      type: "HEADER",
-      status: hasRange ? 206 : 200,
-      start,
-      end,
-      totalSize: isDsfFile ? wavTotalSize : file.size,
-      contentLength,
-      mimeType: isDsfFile ? "audio/wav" : mimeType,
-    });
 
     if (isDsfFile && alignedStart < 44) {
       const wavHeader = new ArrayBuffer(44);

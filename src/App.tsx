@@ -33,7 +33,7 @@ function getPreviewKind(file: DriveFile) {
   const ext = fileExtension(file.name);
   const mimeType = file.mimeType || "";
 
-  if (mimeType.startsWith("video/") || ["mp4", "webm", "ogg", "mov"].includes(ext)) return "stream";
+  if (mimeType.startsWith("video/") || ["mp4", "webm", "ogg", "mov", "mkv", "avi", "3gp", "flv", "ts", "mts", "m2ts", "wmv"].includes(ext)) return "stream";
   if (mimeType.startsWith("audio/") || ["mp3", "wav", "m4a", "flac", "ogg", "opus", "oga", "caf", "aac", "dsf", "dff"].includes(ext)) return "stream";
   if (mimeType === "application/pdf" || ext === "pdf") return "stream";
   if (["txt", "md", "json", "js", "ts", "py", "rs", "go", "html", "css", "xml"].includes(ext)) return "stream";
