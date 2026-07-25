@@ -25,6 +25,7 @@ export function parseManifest(text: string): ChunkManifest | null {
         fileName: data.fileName,
         fileSize: data.fileSize,
         chunks: data.chunks,
+        ...(typeof data.chunkSize === "number" && data.chunkSize > 0 ? { chunkSize: data.chunkSize } : {}),
         ...(typeof data.thumb === "number" ? { thumb: data.thumb } : {}),
       };
       return manifest;
@@ -42,16 +43,33 @@ export function buildManifest(
   fileName: string,
   fileSize: number,
   chunkMsgIds: number[],
-  thumbMsgId?: number
+  thumbMsgId?: number,
+  chunkSize?: number
 ): string {
   const manifest: ChunkManifest = {
     type: "segmented_file",
     fileName,
     fileSize,
     chunks: chunkMsgIds,
+    ...(chunkSize !== undefined ? { chunkSize } : {}),
     ...(thumbMsgId !== undefined ? { thumb: thumbMsgId } : {}),
   };
   return JSON.stringify(manifest);
+}
+
+/**
+ * Determine effective chunk size for a file manifest.
+ * Fallback dynamically for legacy manifests without chunkSize.
+ */
+export function getFileChunkSize(manifest: ChunkManifest): number {
+  if (manifest.chunkSize && manifest.chunkSize > 0) {
+    return manifest.chunkSize;
+  }
+  if (!manifest.chunks || manifest.chunks.length <= 1) {
+    return 50 * 1024 * 1024;
+  }
+  const estimated = Math.ceil(manifest.fileSize / (manifest.chunks.length - 1));
+  return estimated > 0 ? estimated : 50 * 1024 * 1024;
 }
 
 

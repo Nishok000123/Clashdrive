@@ -236,10 +236,27 @@ async function uploadChunk(
 }
 
 /**
+ * Calculate dynamic upload chunk size based on total file size:
+ * - Up to 1 GB: 50 MB
+ * - 1 GB to 2 GB: 100 MB
+ * - 2 GB to 3 GB: 150 MB
+ * - Increases by 50 MB for each additional 1 GB tier
+ * - Maximum chunk size cap: 500 MB
+ */
+export function getUploadChunkSize(fileSize: number): number {
+  const MB = 1024 * 1024;
+  const GB = 1024 * 1024 * 1024;
+
+  const gbCount = Math.floor(fileSize / GB);
+  const sizeInMB = Math.min(500, (gbCount + 1) * 50);
+  return sizeInMB * MB;
+}
+
+/**
  * Orchestrate a full segmented file upload.
  *
- * 1. Slice the file into CHUNK_SIZE pieces
- * 2. Upload each chunk sequentially (to preserve order & avoid FloodWait)
+ * 1. Slice the file into dynamic chunk size pieces (50MB - 500MB depending on file size)
+ * 2. Upload each chunk sequentially/concurrently
  * 3. Send the manifest JSON as a final message
  */
 export async function uploadFile(
@@ -251,7 +268,8 @@ export async function uploadFile(
   fileId?: string,
   signal?: AbortSignal
 ): Promise<void> {
-  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+  const uploadChunkSize = getUploadChunkSize(file.size);
+  const totalChunks = Math.ceil(file.size / uploadChunkSize);
   const finalFileId = fileId || `${file.name}-${Date.now()}`;
 
   const peer = new Api.InputPeerChannel({ channelId: bigInt(config.chatId), accessHash: bigInt(config.accessHash) });
@@ -269,8 +287,8 @@ export async function uploadFile(
     const totalUploadedBytes = chunkProgress.reduce((a, b) => a + b, 0);
     const elapsedSeconds = Math.max((performance.now() - startedAt) / 1000, 0.001);
     const uploadedChunks = Array.from(chunkProgress).filter((bytes, index) => {
-      const chunkSize = Math.min(CHUNK_SIZE, file.size - index * CHUNK_SIZE);
-      return chunkSize > 0 && bytes >= chunkSize;
+      const currentChunkSize = Math.min(uploadChunkSize, file.size - index * uploadChunkSize);
+      return currentChunkSize > 0 && bytes >= currentChunkSize;
     }).length;
     onProgress?.({
       fileId: finalFileId,
@@ -365,8 +383,8 @@ export async function uploadFile(
       if (signal?.aborted) {
         throw new DOMException("Upload cancelled", "AbortError");
       }
-      const start = i * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const start = i * uploadChunkSize;
+      const end = Math.min(start + uploadChunkSize, file.size);
       const blob = file.slice(start, end);
 
       let attempts = 0;
@@ -451,7 +469,7 @@ export async function uploadFile(
     currentStatus = "finalizing";
     emitProgress();
 
-    const manifestJson = buildManifest(file.name, file.size, chunkMsgIds, thumbMsgId);
+    const manifestJson = buildManifest(file.name, file.size, chunkMsgIds, thumbMsgId, uploadChunkSize);
 
     const sentResult = await client.invoke(
       new Api.messages.SendMessage({

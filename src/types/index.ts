@@ -17,6 +17,7 @@ export interface ChunkManifest {
   fileName: string;
   fileSize: number;
   chunks: number[];
+  chunkSize?: number;
   thumb?: number;
 }
 

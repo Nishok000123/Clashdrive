@@ -1,7 +1,7 @@
 import { TelegramClient, Api } from "telegram";
 import type { DownloadMediaInterface, IterDownloadFunction } from "telegram/client/downloads";
 import type { ChunkManifest, DriveFile, DriveConfig } from "../types";
-import { buildManifest, parseManifest } from "./manifest";
+import { buildManifest, parseManifest, getFileChunkSize } from "./manifest";
 import bigInt from "big-integer";
 import { CHUNK_SIZE } from "../config/telegram";
 import { getHelperClient } from "./client";
@@ -762,7 +762,8 @@ export async function handleStreamRequest(
       dsdEndOffset = dsdHeader.dataOffset + (pcmByteEnd + 1) * 4 - 1;
     }
 
-    const firstMsgChunkIdx = Math.floor((isDsfFile ? dsdStartOffset : alignedStart) / CHUNK_SIZE);
+    const fileChunkSize = getFileChunkSize(file.manifest);
+    const firstMsgChunkIdx = Math.floor((isDsfFile ? dsdStartOffset : alignedStart) / fileChunkSize);
 
     // Pre-warm target DC connection before initiating the stream loop
     if (file.manifest.chunks.length > 0) {
@@ -828,7 +829,7 @@ export async function handleStreamRequest(
     const finalEnd = isDsfFile ? dsdEndOffset : alignedEnd;
 
     while (cursor <= finalEnd && !aborted) {
-      const chunkIndex = Math.floor(cursor / CHUNK_SIZE);
+      const chunkIndex = Math.floor(cursor / fileChunkSize);
 
       // Prefetch the next chunk in the background using the warm primary client
       const nextChunkIndex = chunkIndex + 1;
@@ -839,9 +840,9 @@ export async function handleStreamRequest(
         }
       }
 
-      const chunkStart = chunkIndex * CHUNK_SIZE;
+      const chunkStart = chunkIndex * fileChunkSize;
       const offsetInChunk = cursor - chunkStart;
-      const bytesNeeded = Math.min(finalEnd - cursor + 1, CHUNK_SIZE - offsetInChunk);
+      const bytesNeeded = Math.min(finalEnd - cursor + 1, fileChunkSize - offsetInChunk);
 
       const cachedData = previewChunkCache.get(fileId)?.get(chunkIndex);
       if (cachedData) {
