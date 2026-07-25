@@ -173,12 +173,12 @@ function getDynamicUploadConcurrency() {
   const cores = navigator.hardwareConcurrency || 4;
 
   if (cores >= 12) {
-    return { segments: 10, workers: 32 };
+    return { segments: 4, workers: 24 };
   }
   if (cores >= 8) {
-    return { segments: 8, workers: 32 };
+    return { segments: 3, workers: 20 };
   }
-  return { segments: 6, workers: 24 };
+  return { segments: 2, workers: 16 };
 }
 
 /**
@@ -416,7 +416,7 @@ export async function uploadFile(
         }
         try {
           currentStatus = "uploading";
-          const activeClient = await getHelperClient(i % 8);
+          const activeClient = await getHelperClient(i % 3);
           const msgId = await uploadChunk(
             activeClient,
             peer,
