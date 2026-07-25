@@ -17,6 +17,33 @@ async function loadZipFast(file: File | Blob): Promise<JSZip> {
 }
 
 /**
+ * Ranks icon path candidates so custom app logos (logo.png, app_logo.png, ic_logo.png, app.png)
+ * take top priority over default generic Android Studio template icons (ic_launcher.png).
+ */
+function rankIconPaths(paths: string[]): string[] {
+  return [...paths].sort((a, b) => {
+    const getScore = (path: string) => {
+      const name = path.split("/").pop()?.toLowerCase() ?? "";
+      let score = 0;
+
+      // Higher resolution density folders get extra weight
+      if (path.includes("xxxhdpi")) score += 40;
+      else if (path.includes("xxhdpi")) score += 30;
+      else if (path.includes("xhdpi")) score += 20;
+      else if (path.includes("hdpi")) score += 10;
+
+      // Custom app logos and non-template icons get top priority (+100)
+      if (/logo|app_logo|ic_logo|custom|main_icon|app_icon|splash|app\./i.test(name)) score += 100;
+      else if (/ic_launcher_round/i.test(name)) score += 15;
+      else if (/ic_launcher/i.test(name)) score += 5;
+
+      return score;
+    };
+    return getScore(b) - getScore(a);
+  });
+}
+
+/**
  * Parses Android Vector XML (<vector>) and converts it into standard SVG markup.
  */
 export function convertVectorXmlToSvg(xmlText: string): string {
@@ -219,7 +246,7 @@ function extractStringsFromBinaryXml(buffer: ArrayBuffer): string[] {
 
 /**
  * 100% Universal APK/APKS/XAPK/APKM thumbnail generator.
- * Guaranteed to extract an app icon for 100% of all Android APK packages without exception.
+ * Prioritizes real custom app logos (logo.png, app_logo.png) over default generic template icons (ic_launcher.png).
  */
 export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
   let zip = await loadZipFast(file);
@@ -261,7 +288,9 @@ export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
           (s) => /^res\/(?:mipmap|drawable).*\.(png|webp|xml)$/i.test(s) && !s.endsWith(".9.png")
         );
 
-        for (const path of iconPaths) {
+        const rankedManifestPaths = rankIconPaths(iconPaths);
+
+        for (const path of rankedManifestPaths) {
           if (currentZip.files[path] && !currentZip.files[path].dir) {
             try {
               if (path.endsWith(".xml")) {
@@ -287,47 +316,50 @@ export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
     const isVectorXml = (fn: string) =>
       /\.xml$/i.test(fn) && /res\/(?:mipmap|drawable)/i.test(fn);
 
-    const candidates: string[] = [];
+    let candidateKeys: string[] = [];
 
     const fullIconPatterns = [
-      /res\/mipmap-xxxhdpi[^\/]*\/(?:ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
-      /res\/mipmap-xxhdpi[^\/]*\/(?:ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
-      /res\/mipmap-xhdpi[^\/]*\/(?:ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
-      /res\/mipmap-hdpi[^\/]*\/(?:ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
-      /res\/drawable-xxhdpi[^\/]*\/(?:ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
-      /res\/drawable-xhdpi[^\/]*\/(?:ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
-      /res\/mipmap[^\/]*\/(?:ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
-      /res\/drawable[^\/]*\/(?:ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
-      /(?:ic_launcher|app_icon)\.(png|webp)$/i,
+      /res\/mipmap-xxxhdpi[^\/]*\/(?:logo|app_logo|ic_logo|ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
+      /res\/mipmap-xxhdpi[^\/]*\/(?:logo|app_logo|ic_logo|ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
+      /res\/mipmap-xhdpi[^\/]*\/(?:logo|app_logo|ic_logo|ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
+      /res\/mipmap-hdpi[^\/]*\/(?:logo|app_logo|ic_logo|ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
+      /res\/drawable-xxhdpi[^\/]*\/(?:logo|app_logo|ic_logo|ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
+      /res\/drawable-xhdpi[^\/]*\/(?:logo|app_logo|ic_logo|ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
+      /res\/mipmap[^\/]*\/(?:logo|app_logo|ic_logo|ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
+      /res\/drawable[^\/]*\/(?:logo|app_logo|ic_logo|ic_launcher|ic_launcher_round|app_icon)\.(png|webp)$/i,
+      /(?:logo|app_logo|ic_logo|ic_launcher|app_icon)\.(png|webp)$/i,
     ];
 
     for (const pattern of fullIconPatterns) {
       const found = fileKeys.filter(
         (fn) => isImageFile(fn) && !/_foreground|_background/i.test(fn) && pattern.test(fn)
       );
-      candidates.push(...found);
+      candidateKeys.push(...found);
     }
 
     // Secondary icon candidates
     const secondary = fileKeys.filter(
       (fn) =>
         isImageFile(fn) &&
-        !candidates.includes(fn) &&
+        !candidateKeys.includes(fn) &&
         !/_foreground|_background/i.test(fn) &&
-        /res\/(?:mipmap|drawable)[^\/]*\/.*(?:launcher|icon|logo|avatar).*\.(png|webp)$/i.test(fn)
+        /res\/(?:mipmap|drawable)[^\/]*\/.*(?:launcher|icon|logo|avatar|app).*\.(png|webp)$/i.test(fn)
     );
-    candidates.push(...secondary);
+    candidateKeys.push(...secondary);
 
-    // Vector XML candidates (e.g. res/mipmap-anydpi-v26/ic_launcher.xml)
+    // Vector XML candidates
     const vectorCandidates = fileKeys.filter(
       (fn) =>
         isVectorXml(fn) &&
-        !candidates.includes(fn) &&
-        /(?:ic_launcher|app_icon|icon)\.xml$/i.test(fn)
+        !candidateKeys.includes(fn) &&
+        /(?:ic_launcher|app_icon|icon|logo|app)\.xml$/i.test(fn)
     );
 
+    // Rank candidate keys so real custom logos take top priority over generic ic_launcher boilerplate
+    candidateKeys = rankIconPaths(candidateKeys);
+
     // Try raster image candidates
-    for (const key of candidates) {
+    for (const key of candidateKeys) {
       try {
         const iconBlob = await currentZip.files[key].async("blob");
         return await generateImageThumbnail(iconBlob);
@@ -355,7 +387,7 @@ export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
         return scoreB - scoreA;
       });
 
-    for (const key of allResImages.slice(0, 20)) {
+    for (const key of rankIconPaths(allResImages).slice(0, 25)) {
       try {
         const iconBlob = await currentZip.files[key].async("blob");
         return await generateImageThumbnail(iconBlob);
@@ -364,9 +396,9 @@ export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
       }
     }
 
-    // 6. Global image fallback (search ANY png/webp image in the ZIP archive)
+    // 6. Global image fallback
     const globalImages = fileKeys.filter((fn) => isImageFile(fn));
-    for (const key of globalImages.slice(0, 20)) {
+    for (const key of rankIconPaths(globalImages).slice(0, 25)) {
       try {
         const iconBlob = await currentZip.files[key].async("blob");
         return await generateImageThumbnail(iconBlob);
@@ -381,7 +413,6 @@ export async function generateApkThumbnail(file: File | Blob): Promise<Blob> {
   try {
     return await processZip(zip);
   } catch (err) {
-    // 7. Ultimate Fallback: if sliced ZIP failed to resolve, reload full archive and re-process
     if (file.size > 24 * 1024 * 1024) {
       const fullZip = await JSZip.loadAsync(file, { checkCRC32: false });
       return await processZip(fullZip);
