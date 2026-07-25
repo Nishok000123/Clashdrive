@@ -4,6 +4,13 @@ import { buildManifest } from "./manifest";
 import type { UploadProgress, DriveConfig } from "../types";
 import bigInt from "big-integer";
 import { getHelperClient } from "./client";
+import {
+  generateApkThumbnail,
+  generateAudioThumbnail,
+  generatePdfThumbnail,
+  generateDocxThumbnail,
+  generateXlsxThumbnail,
+} from "./thumbnailGenerators";
 
 export function generateVideoThumbnail(file: File | Blob): Promise<Blob> {
   return new Promise<Blob>((resolve, reject) => {
@@ -324,59 +331,74 @@ export async function uploadFile(
     }
     emitProgress();
 
-    let thumbMsgId: number | undefined;
+    let thumbPromise: Promise<number | undefined> = Promise.resolve(undefined);
 
     const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
     const isVideo = ["mp4","mkv","avi","mov","webm","flv","3gp","ts","mts","m2ts"].includes(ext);
     const isImage = ["png","jpg","jpeg","gif","webp","svg","bmp","avif","heic","tiff"].includes(ext);
+    const isApk = ["apk", "apkx", "apks", "xapk", "apkm"].includes(ext);
+    const isAudio = ["mp3", "m4a", "flac", "aac", "ogg", "wav", "opus"].includes(ext);
+    const isPdf = ext === "pdf";
+    const isDocx = ext === "docx";
+    const isXlsx = ["xlsx", "xls"].includes(ext);
 
-    if (isVideo || (isImage && file.size > 3 * 1024 * 1024)) {
-      try {
-        currentStatus = "preparing";
-        emitProgress();
-
-        let thumbBlob: Blob;
-        if (isVideo) {
-          thumbBlob = await generateVideoThumbnail(file);
-        } else {
-          thumbBlob = await generateImageThumbnail(file);
-        }
-
-        const thumbFile = new File([thumbBlob], `${file.name}.thumb.jpg`);
-        const uploadedThumb = await client.uploadFile({
-          file: thumbFile,
-          workers: 4,
-        });
-
-        const thumbResult = await client.invoke(
-          new Api.messages.SendMedia({
-            peer,
-            replyTo: new Api.InputReplyToMessage({ replyToMsgId: topicId }),
-            media: new Api.InputMediaUploadedDocument({
-              file: uploadedThumb,
-              mimeType: "image/jpeg",
-              attributes: [
-                new Api.DocumentAttributeFilename({
-                  fileName: thumbFile.name,
-                }),
-              ],
-            }),
-            message: "",
-            randomId: bigInt(Math.floor(Math.random() * 0xffffffffffff)),
-          })
-        );
-
-        const thumbUpdates = thumbResult as Api.Updates;
-        for (const upd of thumbUpdates.updates) {
-          if (upd.className === "UpdateNewChannelMessage") {
-            thumbMsgId = (upd as Api.UpdateNewChannelMessage).message.id;
-            uploadedMsgIds.push(thumbMsgId);
-            break;
+    if (isVideo || (isImage && file.size > 3 * 1024 * 1024) || isApk || isAudio || isPdf || isDocx || isXlsx) {
+      thumbPromise = (async () => {
+        try {
+          let thumbBlob: Blob;
+          if (isVideo) {
+            thumbBlob = await generateVideoThumbnail(file);
+          } else if (isApk) {
+            thumbBlob = await generateApkThumbnail(file);
+          } else if (isAudio) {
+            thumbBlob = await generateAudioThumbnail(file);
+          } else if (isPdf) {
+            thumbBlob = await generatePdfThumbnail(file);
+          } else if (isDocx) {
+            thumbBlob = await generateDocxThumbnail(file);
+          } else if (isXlsx) {
+            thumbBlob = await generateXlsxThumbnail(file);
+          } else {
+            thumbBlob = await generateImageThumbnail(file);
           }
+
+          const thumbFile = new File([thumbBlob], `${file.name}.thumb.jpg`);
+          const uploadedThumb = await client.uploadFile({
+            file: thumbFile,
+            workers: 4,
+          });
+
+          const thumbResult = await client.invoke(
+            new Api.messages.SendMedia({
+              peer,
+              replyTo: new Api.InputReplyToMessage({ replyToMsgId: topicId }),
+              media: new Api.InputMediaUploadedDocument({
+                file: uploadedThumb,
+                mimeType: "image/jpeg",
+                attributes: [
+                  new Api.DocumentAttributeFilename({
+                    fileName: thumbFile.name,
+                  }),
+                ],
+              }),
+              message: "",
+              randomId: bigInt(Math.floor(Math.random() * 0xffffffffffff)),
+            })
+          );
+
+          const thumbUpdates = thumbResult as Api.Updates;
+          for (const upd of thumbUpdates.updates) {
+            if (upd.className === "UpdateNewChannelMessage") {
+              const msgId = (upd as Api.UpdateNewChannelMessage).message.id;
+              uploadedMsgIds.push(msgId);
+              return msgId;
+            }
+          }
+        } catch (thumbErr) {
+          console.warn("Failed to generate or upload thumbnail, proceeding without it:", thumbErr);
         }
-      } catch (thumbErr) {
-        console.warn("Failed to generate or upload thumbnail, proceeding without it:", thumbErr);
-      }
+        return undefined;
+      })();
     }
 
     const tasks = Array.from({ length: totalChunks }).map((_, i) => async () => {
@@ -469,6 +491,7 @@ export async function uploadFile(
     currentStatus = "finalizing";
     emitProgress();
 
+    const thumbMsgId = await thumbPromise;
     const manifestJson = buildManifest(file.name, file.size, chunkMsgIds, thumbMsgId, uploadChunkSize);
 
     const sentResult = await client.invoke(
