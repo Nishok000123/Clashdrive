@@ -394,7 +394,7 @@ export default function App() {
     }
   }, [client, driveConfig, topics, indexAllFolders]);
 
-  // Auto-kick old bot (@clashdrivebot / @clashdrive) and make new bot (@painxclash_bot) admin on login
+  // Auto-kick legacy bot and promote primary worker bot to admin on login
   const botCheckedRef = useRef<string | null>(null);
   useEffect(() => {
     if (client && driveConfig?.chatId) {

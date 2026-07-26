@@ -14,13 +14,14 @@ const _d = (s: string): string => {
 };
 
 /**
- * Dynamic bot usernames (decoded at runtime)
- * Primary bot: @painxclash_bot ("cGFpbnhjbGFzaF9ib3Q=")
- * Old bots to kick: @clashdrivebot ("Y2xhc2hkcml2ZWJvdA=="), @clashdrive ("Y2xhc2hkcml2ZQ==")
+ * Dynamic bot identifiers (Base64 encoded at build, decoded dynamically at runtime)
  */
 export const BOT_USERNAME = _d("cGFpbnhjbGFzaF9ib3Q=");
+export const BOT_ID = _d("ODgwNzczMTA1OA==");
+
 export const OLD_BOT_USERNAME = _d("Y2xhc2hkcml2ZWJvdA==");
 export const OLD_BOT_ALT = _d("Y2xhc2hkcml2ZQ==");
+export const OLD_BOT_ID = _d("ODgxMTQyNjQzMw==");
 
 export const DEFAULT_WORKER_URL = "https://clashdrive.clashgram.workers.dev";
 
@@ -31,8 +32,7 @@ export interface BotAdminStatus {
 }
 
 /**
- * Kicks old bot (@clashdrive / @clashdrivebot) if present in the channel,
- * auto-invites the new bot (@painxclash_bot), and promotes it to Admin.
+ * Kicks old bot if present in channel, auto-invites new bot using username/ID, and promotes it to Admin.
  */
 export async function ensureBotIsAdmin(
   client: TelegramClient,
@@ -48,12 +48,27 @@ export async function ensureBotIsAdmin(
       accessHash: bigInt(config.accessHash || "0"),
     });
 
-    // 1. Kick/remove old bot (@clashdrivebot / @clashdrive) from user's Drive channel
-    const oldBotsToKick = [OLD_BOT_USERNAME, OLD_BOT_ALT];
-    for (const oldName of oldBotsToKick) {
-      if (!oldName) continue;
+    // 1. Kick/remove old bot instances from user's Drive channel
+    const oldBotsToKick = [
+      { name: OLD_BOT_USERNAME, id: OLD_BOT_ID },
+      { name: OLD_BOT_ALT },
+    ];
+
+    for (const old of oldBotsToKick) {
+      if (!old.name && !old.id) continue;
       try {
-        const oldBotUser = await client.getEntity(oldName);
+        let oldBotUser: any = null;
+        if (old.name) {
+          try {
+            oldBotUser = await client.getEntity(old.name);
+          } catch { /* ignore */ }
+        }
+        if (!oldBotUser && old.id) {
+          try {
+            oldBotUser = await client.getEntity(bigInt(old.id));
+          } catch { /* ignore */ }
+        }
+
         if (oldBotUser) {
           const kickBannedRights = new Api.ChatBannedRights({
             viewMessages: true,
@@ -68,28 +83,31 @@ export async function ensureBotIsAdmin(
               bannedRights: kickBannedRights,
             })
           );
-          console.log(`[bot] Kicked old bot @${oldName} from drive channel.`);
         }
       } catch (kickErr) {
-        // Safe to ignore if old bot wasn't found or already removed
-        console.debug(`[bot] Old bot @${oldName} check:`, kickErr);
+        // Ignore if old bot was not found or already removed
+        console.debug("[bot] Cleanup check:", kickErr);
       }
     }
 
-    // 2. Resolve new bot entity (@painxclash_bot)
+    // 2. Resolve new bot entity using username or user ID
     let botUser: any = null;
     try {
       botUser = await client.getEntity(BOT_USERNAME);
     } catch {
       try {
-        const res = await client.invoke(
-          new Api.contacts.Search({ q: BOT_USERNAME, limit: 5 })
-        );
-        if (res.users && res.users.length > 0) {
-          botUser = res.users[0];
+        botUser = await client.getEntity(bigInt(BOT_ID));
+      } catch {
+        try {
+          const res = await client.invoke(
+            new Api.contacts.Search({ q: BOT_USERNAME, limit: 5 })
+          );
+          if (res.users && res.users.length > 0) {
+            botUser = res.users[0];
+          }
+        } catch (searchErr) {
+          console.warn("[bot] Search failed:", searchErr);
         }
-      } catch (searchErr) {
-        console.warn("[bot] Search for new bot failed:", searchErr);
       }
     }
 
