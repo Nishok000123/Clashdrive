@@ -3,6 +3,7 @@ import { Input } from "../ui/Input";
 import type { UserProfile, SavedAccount } from "../../types";
 import type { Theme } from "../../hooks/useTheme";
 import { APP_VERSION } from "../../config/telegram";
+import { BOT_USERNAME } from "../../lib/bot";
 
 interface HeaderProps {
   driveTitle: string;
@@ -215,7 +216,7 @@ export function Header({
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-xs font-bold text-md-on-surface leading-tight">File Sharing</p>
-                    <p className="text-[10px] text-md-on-surface-variant font-medium mt-0.5">Auto-invite @clashdrivebot</p>
+                    <p className="text-[10px] text-md-on-surface-variant font-medium mt-0.5">Auto-invite @{BOT_USERNAME}</p>
                   </div>
                   {onToggleFileSharing && (
                     <button

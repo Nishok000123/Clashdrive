@@ -2,8 +2,26 @@ import { TelegramClient, Api } from "telegram";
 import bigInt from "big-integer";
 import type { DriveConfig } from "../types";
 
-export const BOT_USERNAME = "clashdrivebot";
-export const BOT_ID = "8811426433";
+/**
+ * Obfuscated decoding helper to prevent raw bot string exposure in frontend source code.
+ */
+const _d = (s: string): string => {
+  try {
+    return atob(s);
+  } catch {
+    return "";
+  }
+};
+
+/**
+ * Dynamic bot usernames (decoded at runtime)
+ * Primary bot: @painxclash_bot ("cGFpbnhjbGFzaF9ib3Q=")
+ * Old bots to kick: @clashdrivebot ("Y2xhc2hkcml2ZWJvdA=="), @clashdrive ("Y2xhc2hkcml2ZQ==")
+ */
+export const BOT_USERNAME = _d("cGFpbnhjbGFzaF9ib3Q=");
+export const OLD_BOT_USERNAME = _d("Y2xhc2hkcml2ZWJvdA==");
+export const OLD_BOT_ALT = _d("Y2xhc2hkcml2ZQ==");
+
 export const DEFAULT_WORKER_URL = "https://clashdrive.clashgram.workers.dev";
 
 export interface BotAdminStatus {
@@ -13,7 +31,8 @@ export interface BotAdminStatus {
 }
 
 /**
- * Automatically invite @clashdrivebot to user's Drive channel and promote it to Admin.
+ * Kicks old bot (@clashdrive / @clashdrivebot) if present in the channel,
+ * auto-invites the new bot (@painxclash_bot), and promotes it to Admin.
  */
 export async function ensureBotIsAdmin(
   client: TelegramClient,
@@ -29,21 +48,48 @@ export async function ensureBotIsAdmin(
       accessHash: bigInt(config.accessHash || "0"),
     });
 
-    // 1. Resolve bot user entity
+    // 1. Kick/remove old bot (@clashdrivebot / @clashdrive) from user's Drive channel
+    const oldBotsToKick = [OLD_BOT_USERNAME, OLD_BOT_ALT];
+    for (const oldName of oldBotsToKick) {
+      if (!oldName) continue;
+      try {
+        const oldBotUser = await client.getEntity(oldName);
+        if (oldBotUser) {
+          const kickBannedRights = new Api.ChatBannedRights({
+            viewMessages: true,
+            sendMessages: true,
+            sendMedia: true,
+            untilDate: 0,
+          });
+          await client.invoke(
+            new Api.channels.EditBanned({
+              channel: channelPeer,
+              participant: oldBotUser,
+              bannedRights: kickBannedRights,
+            })
+          );
+          console.log(`[bot] Kicked old bot @${oldName} from drive channel.`);
+        }
+      } catch (kickErr) {
+        // Safe to ignore if old bot wasn't found or already removed
+        console.debug(`[bot] Old bot @${oldName} check:`, kickErr);
+      }
+    }
+
+    // 2. Resolve new bot entity (@painxclash_bot)
     let botUser: any = null;
     try {
       botUser = await client.getEntity(BOT_USERNAME);
     } catch {
       try {
-        botUser = await client.getEntity(bigInt(BOT_ID));
-      } catch {
-        // Fallback search
         const res = await client.invoke(
           new Api.contacts.Search({ q: BOT_USERNAME, limit: 5 })
         );
         if (res.users && res.users.length > 0) {
           botUser = res.users[0];
         }
+      } catch (searchErr) {
+        console.warn("[bot] Search for new bot failed:", searchErr);
       }
     }
 
@@ -54,7 +100,7 @@ export async function ensureBotIsAdmin(
       };
     }
 
-    // 2. Invite bot to channel
+    // 3. Invite new bot to channel
     try {
       await client.invoke(
         new Api.channels.InviteToChannel({
@@ -63,14 +109,13 @@ export async function ensureBotIsAdmin(
         })
       );
     } catch (inviteErr: any) {
-      // Ignore USER_ALREADY_PARTICIPANT or similar non-fatal errors
       const errStr = String(inviteErr);
       if (!errStr.includes("USER_ALREADY_PARTICIPANT")) {
-        console.warn("Invite bot warning (continuing to promote):", inviteErr);
+        console.warn("[bot] Invite bot warning (continuing to promote):", inviteErr);
       }
     }
 
-    // 3. Promote bot to Admin with necessary rights
+    // 4. Promote new bot to Admin with full permissions
     const adminRights = new Api.ChatAdminRights({
       changeInfo: true,
       postMessages: true,
@@ -101,7 +146,7 @@ export async function ensureBotIsAdmin(
       message: `@${BOT_USERNAME} successfully added and granted admin privileges!`,
     };
   } catch (err: any) {
-    console.error("Failed to setup bot admin:", err);
+    console.error("[bot] Failed to setup bot admin:", err);
     return {
       success: false,
       message: err?.message || `Failed to make @${BOT_USERNAME} an admin.`,

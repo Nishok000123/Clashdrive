@@ -3,6 +3,7 @@ import type { DriveFile, DriveConfig, TopicFolder } from "../../types";
 import { formatBytes } from "../../lib/manifest";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
+import { BOT_USERNAME } from "../../lib/bot";
 
 interface ReceiveShareModalProps {
   initialHash?: string;
@@ -148,7 +149,7 @@ export function ReceiveShareModal({
       const result = await res.json();
       if (result.ok) {
         const folderName = topics.find((t) => t.id === selectedTopicId)?.title || "your folder";
-        setSuccessMsg(`File saved & forwarded to "${folderName}" via @clashdrivebot!`);
+        setSuccessMsg(`File saved & forwarded to "${folderName}" via @${BOT_USERNAME}!`);
         if (onSuccess) {
           onSuccess(selectedTopicId);
         }

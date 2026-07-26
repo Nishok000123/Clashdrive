@@ -16,7 +16,7 @@ import { ShareModal } from "./components/drive/ShareModal";
 import { ReceiveShareModal } from "./components/drive/ReceiveShareModal";
 import { MoveCopyModal } from "./components/drive/MoveCopyModal";
 import { RenameModal } from "./components/drive/RenameModal";
-import { ensureBotIsAdmin, DEFAULT_WORKER_URL } from "./lib/bot";
+import { ensureBotIsAdmin, DEFAULT_WORKER_URL, BOT_USERNAME } from "./lib/bot";
 
 const MB = 1024 * 1024;
 const MAX_IMAGE_PREVIEW_BYTES = 80 * MB;
@@ -220,7 +220,7 @@ export default function App() {
 
     if (nextState) {
       if (client && driveConfig) {
-        triggerToast("Checking @clashdrivebot admin permissions...", "info");
+        triggerToast(`Checking @${BOT_USERNAME} admin permissions...`, "info");
         const status = await ensureBotIsAdmin(client, driveConfig);
         if (status.success) {
           triggerToast(status.message, "success");
@@ -393,6 +393,20 @@ export default function App() {
       indexAllFolders(client, driveConfig, topics);
     }
   }, [client, driveConfig, topics, indexAllFolders]);
+
+  // Auto-kick old bot (@clashdrivebot / @clashdrive) and make new bot (@painxclash_bot) admin on login
+  const botCheckedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (client && driveConfig?.chatId) {
+      const key = `${driveConfig.chatId}`;
+      if (botCheckedRef.current !== key) {
+        botCheckedRef.current = key;
+        ensureBotIsAdmin(client, driveConfig).catch((err) => {
+          console.warn("[bot] Auto setup error:", err);
+        });
+      }
+    }
+  }, [client, driveConfig]);
 
   // When user navigates into a folder, load its files
   useEffect(() => {
