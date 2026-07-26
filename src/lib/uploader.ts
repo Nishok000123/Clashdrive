@@ -3,7 +3,7 @@ import { CHUNK_SIZE, UPLOAD_WORKERS } from "../config/telegram";
 import { buildManifest } from "./manifest";
 import type { UploadProgress, DriveConfig } from "../types";
 import bigInt from "big-integer";
-import { getHelperClient } from "./client";
+import { getHelperClient, ensureConnected } from "./client";
 import {
   generateApkThumbnail,
   generateAudioThumbnail,
@@ -170,15 +170,7 @@ function getFloodWaitSeconds(err: unknown) {
  * Upload a single blob chunk as a document to the topic.
  */
 function getDynamicUploadConcurrency() {
-  const cores = navigator.hardwareConcurrency || 4;
-
-  if (cores >= 12) {
-    return { segments: 4, workers: 24 };
-  }
-  if (cores >= 8) {
-    return { segments: 3, workers: 20 };
-  }
-  return { segments: 2, workers: 16 };
+  return { segments: 3, workers: 20 };
 }
 
 /**
@@ -410,12 +402,13 @@ export async function uploadFile(
       const blob = file.slice(start, end);
 
       let attempts = 0;
-      while (attempts < 5) {
+      while (attempts < 10) {
         if (signal?.aborted) {
           throw new DOMException("Upload cancelled", "AbortError");
         }
         try {
           currentStatus = "uploading";
+          await ensureConnected();
           const activeClient = await getHelperClient(i % 3);
           const msgId = await uploadChunk(
             activeClient,
@@ -457,9 +450,10 @@ export async function uploadFile(
             continue;
           }
           attempts++;
-          if (attempts < 5) {
-            console.warn(`Upload chunk ${i} failed, retrying...`, err);
-            await new Promise((r) => setTimeout(r, 1000 * attempts));
+          if (attempts < 10) {
+            console.warn(`Upload chunk ${i} failed (attempt ${attempts}), retrying...`, err);
+            await ensureConnected();
+            await new Promise((r) => setTimeout(r, 1000 * Math.min(attempts, 5)));
             continue;
           }
           currentStatus = "error";

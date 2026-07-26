@@ -305,21 +305,22 @@ export function useAuth() {
     localStorage.removeItem(LS_ACTIVE_ACCOUNT);
     localStorage.removeItem(LS_SESSION);
 
-    if (activeId) {
-      const next = readAccounts().filter((account) => account.userId !== activeId);
-      writeAccounts(next);
-      setAccounts(next);
+    const remaining = readAccounts().filter((account) => account.userId !== activeId);
+    writeAccounts(remaining);
+    setAccounts(remaining);
 
+    if (remaining.length > 0) {
+      const nextAccount = remaining[0];
+      await switchAccount(nextAccount.userId);
     } else {
       localStorage.removeItem(LS_ACCOUNTS);
       setAccounts([]);
+      setConnected(false);
+      setUserProfile(null);
+      setActiveAccountId(null);
+      setState({ step: "credentials", phone: "", loading: false, error: null });
     }
-
-    setConnected(false);
-    setUserProfile(null);
-    setActiveAccountId(null);
-    setState({ step: "credentials", phone: "", loading: false, error: null });
-  }, []);
+  }, [switchAccount]);
 
   const clearCache = useCallback(async () => {
     await destroyClient();

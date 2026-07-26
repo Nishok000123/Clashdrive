@@ -193,28 +193,13 @@ export function stopConnectionMonitor(): void {
 const _helperClients: TelegramClient[] = [];
 
 /**
- * Returns a helper client from the pool (lazily instantiating it if necessary).
- * Creates helper clients sharing the same primary session credentials.
+ * Returns the primary connected TelegramClient instance.
+ * Shares the single authenticated MTProto session to prevent AUTH_KEY_DUPLICATED errors.
  */
-export async function getHelperClient(index: number): Promise<TelegramClient> {
-  if (_helperClients[index]) {
-    const client = _helperClients[index];
-    if (!client.connected) {
-      await client.connect();
-    }
-    return client;
-  }
-
-  const saved = localStorage.getItem(LS_SESSION) ?? "";
-  if (!saved) {
-    throw new Error("No active session available for helper clients");
-  }
-
-  const { apiId, apiHash } = getApiCredentials();
-  const helper = createClientFromSession(saved, apiId, apiHash);
-  await helper.connect();
-  _helperClients[index] = helper;
-  return helper;
+export async function getHelperClient(_index?: number): Promise<TelegramClient> {
+  const client = getClient();
+  await ensureConnected();
+  return client;
 }
 
 /**
