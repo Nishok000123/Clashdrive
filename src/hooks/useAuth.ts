@@ -71,7 +71,7 @@ export function useAuth() {
     try {
       const buffer = await client.downloadProfilePhoto(me);
       if (buffer) {
-        avatarUrl = URL.createObjectURL(new Blob([buffer], { type: "image/jpeg" }));
+        avatarUrl = URL.createObjectURL(new Blob([buffer as unknown as BlobPart], { type: "image/jpeg" }));
       }
     } catch (e) {
       console.warn("Could not download profile photo", e);
