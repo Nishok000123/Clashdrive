@@ -27,10 +27,12 @@ if (typeof window !== "undefined") {
 try {
   Object.defineProperty(Buffer, Symbol.hasInstance, {
     value: function (instance: any) {
-      return (
+      return !!(
         instance &&
         (instance.constructor?.name === "Buffer" ||
-          Buffer.isBuffer(instance))
+          Buffer.isBuffer(instance) ||
+          instance instanceof Uint8Array ||
+          (typeof instance === "object" && "length" in instance && "byteLength" in instance))
       );
     },
     configurable: true,

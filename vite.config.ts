@@ -19,6 +19,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": "/src",
+      "buffer/": "buffer",
+      "buffer": "buffer",
     },
   },
   build: {

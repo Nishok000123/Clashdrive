@@ -352,8 +352,9 @@ export function useAuth() {
   }, []);
 
   const submitPassword = useCallback((pwd: string) => {
+    const cleanPassword = typeof pwd === "string" ? pwd.trim() : String(pwd ?? "").trim();
     setState((s) => ({ ...s, loading: true, error: null }));
-    passwordResolve.current?.(pwd);
+    passwordResolve.current?.(cleanPassword);
   }, []);
 
   return {
