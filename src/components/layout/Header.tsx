@@ -150,7 +150,7 @@ export function Header({
         <div className="flex-1 min-w-0 max-w-lg relative">
           <Input
             ref={searchRef}
-            placeholder="Search files and folders..."
+            placeholder="Search"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             className="!bg-md-surface-container !border-md-outline-variant/50 !py-2.5 !rounded-[28px] text-sm pr-16"
