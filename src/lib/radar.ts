@@ -91,7 +91,7 @@ export async function scanForDriveGroup(
 
   const dialogs: any[] = [];
   try {
-    for await (const dialog of client.iterDialogs({ limit: 200 })) {
+    for await (const dialog of client.iterDialogs({ limit: 500 })) {
       dialogs.push(dialog);
     }
   } catch (err) {
@@ -99,7 +99,7 @@ export async function scanForDriveGroup(
   }
 
   try {
-    for await (const dialog of client.iterDialogs({ limit: 100, folder: 1 })) {
+    for await (const dialog of client.iterDialogs({ limit: 200, folder: 1 })) {
       dialogs.push(dialog);
     }
   } catch {
@@ -110,12 +110,14 @@ export async function scanForDriveGroup(
 
   for (const dialog of dialogs) {
     const chat = dialog.chat;
+    if (!chat) continue;
+
+    // Skip private 1-on-1 user chats
     if (
-      !chat ||
-      (chat.chatType !== "supergroup" &&
-        chat.type !== "supergroup" &&
-        chat.type !== "channel" &&
-        chat.chatType !== "channel")
+      chat.chatType === "user" ||
+      chat.type === "user" ||
+      (chat as any)._ === "user" ||
+      (chat as any)._ === "peerUser"
     ) {
       continue;
     }
@@ -123,7 +125,7 @@ export async function scanForDriveGroup(
     try {
       let about = "";
       try {
-        const full = await client.getFullChat(chat.inputPeer || chat.id);
+        const full = await client.getFullChat(chat);
         about = full.bio || "";
       } catch {
         const bareId = getBareChannelId(chat.id);
@@ -156,7 +158,7 @@ export async function scanForDriveGroup(
 
         const config: DriveConfig = {
           chatId: markedId,
-          chatTitle: chat.title,
+          chatTitle: chat.title || "Clash Drive",
           accessHash: accessHashStr,
         };
 
