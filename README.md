@@ -1,4 +1,4 @@
-# Clash Drive (v2.0.0)
+# Clash Drive (v3.0.0)
 
 A serverless, client-side web application built natively on Bun that transforms Telegram supergroup forum topics into a personal cloud storage workspace. Run entirely in your browser with direct Telegram Datacenter connections via `@mtcute` MTProto.
 
