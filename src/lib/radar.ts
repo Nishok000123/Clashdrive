@@ -6,6 +6,7 @@ import {
   LS_DRIVE,
 } from "../config/telegram";
 import type { DriveConfig } from "../types";
+import { parseManifest } from "./manifest";
 
 function getBareChannelId(idInput: string | number): number {
   const idStr = String(idInput);
@@ -106,7 +107,12 @@ export async function scanForDriveGroup(
     // folder: 1 might fail if there are no archived dialogs
   }
 
-  const candidates: { config: DriveConfig; bareId: number }[] = [];
+  const candidates: {
+    config: DriveConfig;
+    bareId: number;
+    hasSignature: boolean;
+    manifestCount: number;
+  }[] = [];
 
   for (const dialog of dialogs) {
     const chat = dialog.chat;
@@ -147,7 +153,36 @@ export async function scanForDriveGroup(
         about = full.fullChat?.about ?? "";
       }
 
-      if (about.includes(DRIVE_SIGNATURE)) {
+      const hasSignature = about.includes(DRIVE_SIGNATURE);
+      const titleLower = (chat.title || "").toLowerCase();
+      const titleMatch =
+        titleLower.includes("drive") ||
+        titleLower.includes("clash") ||
+        titleLower.includes("cloud") ||
+        titleLower.includes("storage") ||
+        titleLower.includes("vault");
+
+      let manifestCount = 0;
+      if (hasSignature || titleMatch) {
+        try {
+          const history = await client.getHistory(chat, { limit: 50 });
+          for (const msg of history) {
+            if (msg && msg.text) {
+              if (
+                msg.text.includes('"type":"segmented_file"') ||
+                msg.text.includes("segmented_file") ||
+                parseManifest(msg.text) !== null
+              ) {
+                manifestCount++;
+              }
+            }
+          }
+        } catch {
+          // history check failed or restricted
+        }
+      }
+
+      if (hasSignature || titleMatch || manifestCount > 0) {
         const markedId = getMarkedChannelId(chat.id);
         const bareId = getBareChannelId(chat.id);
         const accessHashStr = (chat as any).raw?.accessHash
@@ -162,7 +197,7 @@ export async function scanForDriveGroup(
           accessHash: accessHashStr,
         };
 
-        candidates.push({ config, bareId });
+        candidates.push({ config, bareId, hasSignature, manifestCount });
       }
     } catch (err) {
       console.warn("Error checking chat in scanForDriveGroup:", chat.title, err);
@@ -171,11 +206,23 @@ export async function scanForDriveGroup(
   }
 
   if (candidates.length > 0) {
-    // Sort candidates by bareId ascending (smallest bare ID = oldest Telegram channel)
-    candidates.sort((a, b) => a.bareId - b.bareId);
-    const oldestConfig = candidates[0].config;
-    localStorage.setItem(userDriveKey, JSON.stringify(oldestConfig));
-    return oldestConfig;
+    // Sort candidates:
+    // 1. Groups with actual file manifest messages first (manifestCount DESC)
+    // 2. Groups with signature next (hasSignature DESC)
+    // 3. Oldest group by creation bareId next (bareId ASC)
+    candidates.sort((a, b) => {
+      if (b.manifestCount !== a.manifestCount) {
+        return b.manifestCount - a.manifestCount;
+      }
+      if (b.hasSignature !== a.hasSignature) {
+        return (b.hasSignature ? 1 : 0) - (a.hasSignature ? 1 : 0);
+      }
+      return a.bareId - b.bareId;
+    });
+
+    const bestConfig = candidates[0].config;
+    localStorage.setItem(userDriveKey, JSON.stringify(bestConfig));
+    return bestConfig;
   }
 
   if (cachedConfig) {
