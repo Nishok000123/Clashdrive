@@ -118,7 +118,7 @@ export function Header({
         )}
 
         {/* Logo */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink min-w-0 select-none">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0 select-none">
           <svg className="w-7 h-7 sm:w-9 sm:h-9 shrink-0" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
             <defs>
               <linearGradient id="header-logo-bg" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -136,18 +136,18 @@ export function Header({
             <path d="M51 68l24-15.5L46.5 61l.5 9.5 4-2.5z" fill="#24A1DE" />
             <path d="M75 52.5L46.5 61l15.5 5.5 13-14z" fill="#38BDF8" />
           </svg>
-          <div className="min-w-0 truncate">
+          <div className="min-w-0 truncate hidden sm:block">
             <h1 className="text-xs sm:text-sm font-bold gradient-text leading-tight flex items-center gap-1 truncate">
               Clash Drive
             </h1>
-            <p className="text-[10px] text-md-on-surface-variant leading-tight font-medium hidden sm:block truncate">
+            <p className="text-[10px] text-md-on-surface-variant leading-tight font-medium truncate">
               {driveTitle === "Clash Drive" || driveTitle === "TG Cloud Drive" ? "Telegram Cloud Storage" : driveTitle}
             </p>
           </div>
         </div>
 
         {/* Search bar — M3 search bar: rounded-[28px] */}
-        <div className="flex-1 max-w-lg hidden md:block relative">
+        <div className="flex-1 min-w-0 max-w-lg relative">
           <Input
             ref={searchRef}
             placeholder="Search files and folders..."

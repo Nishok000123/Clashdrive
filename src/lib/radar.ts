@@ -7,14 +7,38 @@ import {
 } from "../config/telegram";
 import type { DriveConfig } from "../types";
 
+function getBareChannelId(idInput: string | number): number {
+  const idStr = String(idInput);
+  return Number(idStr.replace(/^-100/, "").replace(/^-/, ""));
+}
+
+function getMarkedChannelId(idInput: string | number): string {
+  const bare = getBareChannelId(idInput);
+  return `-100${bare}`;
+}
+
 async function verifyDriveGroup(
   client: TelegramClient,
   config: DriveConfig
 ): Promise<DriveConfig | null> {
+  if (!config || !config.chatId) return null;
+  const markedIdStr = getMarkedChannelId(config.chatId);
+  const markedIdNum = Number(markedIdStr);
+
   try {
+    const fullChat = await client.getFullChat(markedIdNum);
+    if (fullChat && fullChat.bio && fullChat.bio.includes(DRIVE_SIGNATURE)) {
+      return { ...config, chatId: markedIdStr };
+    }
+  } catch {
+    // Fall back to direct raw call
+  }
+
+  try {
+    const bareId = getBareChannelId(config.chatId);
     const channelInput = {
       _: "inputChannel" as const,
-      channelId: Number(config.chatId),
+      channelId: bareId,
       accessHash: Long.fromString(config.accessHash || "0"),
     };
     const full: any = await client.call({
@@ -22,10 +46,14 @@ async function verifyDriveGroup(
       channel: channelInput,
     });
     const about = full.fullChat?.about ?? "";
-    return about.includes(DRIVE_SIGNATURE) ? config : null;
-  } catch {
-    return null;
+    if (about.includes(DRIVE_SIGNATURE)) {
+      return { ...config, chatId: markedIdStr };
+    }
+  } catch (err) {
+    console.warn("verifyDriveGroup failed:", err);
   }
+
+  return null;
 }
 
 /**
@@ -35,22 +63,29 @@ async function verifyDriveGroup(
 export async function scanForDriveGroup(
   client: TelegramClient
 ): Promise<DriveConfig | null> {
-  const me = await client.getMe();
-  const userId = me ? me.id.toString() : "default";
+  let userId = "default";
+  try {
+    const me = await client.getMe();
+    if (me) userId = me.id.toString();
+  } catch (e) {
+    console.warn("Failed to fetch user in radar scan:", e);
+  }
   const userDriveKey = `${LS_DRIVE}_${userId}`;
 
-  // Check localStorage first
-  const cached = localStorage.getItem(userDriveKey);
+  let cachedConfig: DriveConfig | null = null;
+  const cached = localStorage.getItem(userDriveKey) || localStorage.getItem(LS_DRIVE);
   if (cached) {
     try {
-      const config = JSON.parse(cached) as DriveConfig;
-      if (config.accessHash) {
-        const verified = await verifyDriveGroup(client, config);
-        if (verified) return verified;
-        localStorage.removeItem(userDriveKey);
+      const parsed = JSON.parse(cached) as DriveConfig;
+      if (parsed && parsed.chatId) {
+        const verified = await verifyDriveGroup(client, parsed);
+        if (verified) {
+          cachedConfig = verified;
+        }
       }
     } catch {
       localStorage.removeItem(userDriveKey);
+      localStorage.removeItem(LS_DRIVE);
     }
   }
 
@@ -64,44 +99,86 @@ export async function scanForDriveGroup(
   }
 
   try {
-    // Also scan archived dialogs (folder: 1) in case the user archived the drive group
     for await (const dialog of client.iterDialogs({ limit: 100, folder: 1 })) {
       dialogs.push(dialog);
     }
-  } catch (err) {
-    // folder: 1 might fail if there are no archived dialogs, which is fine
+  } catch {
+    // folder: 1 might fail if there are no archived dialogs
   }
+
+  const candidates: { config: DriveConfig; bareId: number }[] = [];
 
   for (const dialog of dialogs) {
     const chat = dialog.chat;
-    if (!chat || (chat.type !== "supergroup" && chat.type !== "channel")) continue;
-
-    const titleLower = (chat.title || "").toLowerCase();
-    if (!titleLower.includes("drive") && !titleLower.includes("clash")) continue;
-
-    try {
-      const channelInput = {
-        _: "inputChannel" as const,
-        channelId: chat.id,
-        accessHash: chat.accessHash || Long.ZERO,
-      };
-      const full: any = await client.call({
-        _: "channels.getFullChannel",
-        channel: channelInput,
-      });
-      const about = full.fullChat?.about ?? "";
-      if (about.includes(DRIVE_SIGNATURE)) {
-        const config: DriveConfig = {
-          chatId: chat.id.toString(),
-          chatTitle: chat.title,
-          accessHash: chat.accessHash ? chat.accessHash.toString() : "0",
-        };
-        localStorage.setItem(userDriveKey, JSON.stringify(config));
-        return config;
-      }
-    } catch {
+    if (
+      !chat ||
+      (chat.chatType !== "supergroup" &&
+        chat.type !== "supergroup" &&
+        chat.type !== "channel" &&
+        chat.chatType !== "channel")
+    ) {
       continue;
     }
+
+    try {
+      let about = "";
+      try {
+        const full = await client.getFullChat(chat.inputPeer || chat.id);
+        about = full.bio || "";
+      } catch {
+        const bareId = getBareChannelId(chat.id);
+        const accessHash = (chat as any).raw?.accessHash || chat.accessHash || Long.ZERO;
+        const channelInput = {
+          _: "inputChannel" as const,
+          channelId: bareId,
+          accessHash:
+            typeof accessHash === "string"
+              ? Long.fromString(accessHash)
+              : typeof accessHash === "number"
+              ? Long.fromNumber(accessHash)
+              : accessHash || Long.ZERO,
+        };
+        const full: any = await client.call({
+          _: "channels.getFullChannel",
+          channel: channelInput,
+        });
+        about = full.fullChat?.about ?? "";
+      }
+
+      if (about.includes(DRIVE_SIGNATURE)) {
+        const markedId = getMarkedChannelId(chat.id);
+        const bareId = getBareChannelId(chat.id);
+        const accessHashStr = (chat as any).raw?.accessHash
+          ? (chat as any).raw.accessHash.toString()
+          : chat.accessHash
+          ? chat.accessHash.toString()
+          : "0";
+
+        const config: DriveConfig = {
+          chatId: markedId,
+          chatTitle: chat.title,
+          accessHash: accessHashStr,
+        };
+
+        candidates.push({ config, bareId });
+      }
+    } catch (err) {
+      console.warn("Error checking chat in scanForDriveGroup:", chat.title, err);
+      continue;
+    }
+  }
+
+  if (candidates.length > 0) {
+    // Sort candidates by bareId ascending (smallest bare ID = oldest Telegram channel)
+    candidates.sort((a, b) => a.bareId - b.bareId);
+    const oldestConfig = candidates[0].config;
+    localStorage.setItem(userDriveKey, JSON.stringify(oldestConfig));
+    return oldestConfig;
+  }
+
+  if (cachedConfig) {
+    localStorage.setItem(userDriveKey, JSON.stringify(cachedConfig));
+    return cachedConfig;
   }
 
   return null;
@@ -124,16 +201,23 @@ export async function createDriveGroup(
   const chats = result.chats || [];
   const channel = chats[0];
 
+  const markedId = getMarkedChannelId(channel.id);
   const config: DriveConfig = {
-    chatId: channel.id.toString(),
+    chatId: markedId,
     chatTitle: channel.title,
     accessHash: channel.accessHash ? channel.accessHash.toString() : "0",
   };
 
-  const me = await client.getMe();
-  const userId = me ? me.id.toString() : "default";
+  let userId = "default";
+  try {
+    const me = await client.getMe();
+    if (me) userId = me.id.toString();
+  } catch (e) {
+    console.warn("Failed to fetch user in createDriveGroup:", e);
+  }
   const userDriveKey = `${LS_DRIVE}_${userId}`;
   localStorage.setItem(userDriveKey, JSON.stringify(config));
 
   return config;
 }
+

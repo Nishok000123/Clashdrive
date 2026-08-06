@@ -43,9 +43,10 @@ export async function ensureBotIsAdmin(
   }
 
   try {
+    const bareChannelId = Number(config.chatId.replace(/^-100/, "").replace(/^-/, ""));
     const channelInput = {
       _: "inputChannel" as const,
-      channelId: Number(config.chatId),
+      channelId: bareChannelId,
       accessHash: Long.fromString(config.accessHash || "0"),
     };
 

@@ -152,15 +152,16 @@ export function normalizeRenamedFileName(file: DriveFile, name: string): string 
 }
 
 export function getPeerInput(config: DriveConfig) {
-  const chatIdNumber = Number(config.chatId);
+  const markedIdNumber = Number(config.chatId);
   if (config.accessHash && config.accessHash !== "0") {
+    const bareId = Number(config.chatId.replace(/^-100/, "").replace(/^-/, ""));
     return {
       _: "inputPeerChannel" as const,
-      channelId: chatIdNumber,
+      channelId: bareId,
       accessHash: Long.fromString(config.accessHash),
     };
   }
-  return chatIdNumber;
+  return markedIdNumber;
 }
 
 export async function preFetchMessages(
