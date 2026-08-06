@@ -160,26 +160,77 @@ export async function scanForDriveGroup(
         titleLower.includes("clash") ||
         titleLower.includes("cloud") ||
         titleLower.includes("storage") ||
-        titleLower.includes("vault");
+        titleLower.includes("vault") ||
+        titleLower.includes("tg");
 
       let manifestCount = 0;
-      if (hasSignature || titleMatch) {
-        try {
-          const history = await client.getHistory(chat, { limit: 50 });
-          for (const msg of history) {
-            if (msg && msg.text) {
+
+      // 1. Scan forum topics if forum supergroup
+      try {
+        const markedIdNum = Number(getMarkedChannelId(chat.id));
+        const bareId = getBareChannelId(chat.id);
+        const accessHash = (chat as any).raw?.accessHash || chat.accessHash || Long.ZERO;
+        const peerInput = {
+          _: "inputPeerChannel" as const,
+          channelId: bareId,
+          accessHash:
+            typeof accessHash === "string"
+              ? Long.fromString(accessHash)
+              : typeof accessHash === "number"
+              ? Long.fromNumber(accessHash)
+              : accessHash || Long.ZERO,
+        };
+
+        const topics = await client.getForumTopics(markedIdNum).catch(() => []);
+        for (const topic of topics) {
+          try {
+            const repliesRes: any = await client.call({
+              _: "messages.getReplies",
+              peer: peerInput,
+              msgId: topic.id,
+              offsetId: 0,
+              offsetDate: 0,
+              addOffset: 0,
+              limit: 20,
+              maxId: 0,
+              minId: 0,
+              hash: Long.ZERO,
+            });
+            const replyMsgs = repliesRes.messages ?? [];
+            for (const m of replyMsgs) {
+              const text = typeof m.message === "string" ? m.message : typeof m.text === "string" ? m.text : "";
               if (
-                msg.text.includes('"type":"segmented_file"') ||
-                msg.text.includes("segmented_file") ||
-                parseManifest(msg.text) !== null
+                text.includes('"type":"segmented_file"') ||
+                text.includes("segmented_file") ||
+                parseManifest(text) !== null
               ) {
                 manifestCount++;
               }
             }
+          } catch {
+            // topic replies check failed
           }
-        } catch {
-          // history check failed or restricted
         }
+      } catch {
+        // topics check failed
+      }
+
+      // 2. Scan general history
+      try {
+        const history = await client.getHistory(chat, { limit: 50 });
+        for (const msg of history) {
+          if (msg && msg.text) {
+            if (
+              msg.text.includes('"type":"segmented_file"') ||
+              msg.text.includes("segmented_file") ||
+              parseManifest(msg.text) !== null
+            ) {
+              manifestCount++;
+            }
+          }
+        }
+      } catch {
+        // history check failed
       }
 
       if (hasSignature || titleMatch || manifestCount > 0) {

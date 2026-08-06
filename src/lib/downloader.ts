@@ -946,12 +946,12 @@ export async function listFilesInTopic(
   const chatIdNumber = Number(config.chatId);
 
   try {
+    const bareId = Number(config.chatId.replace(/^-100/, "").replace(/^-/, ""));
     const channelInput = {
       _: "inputPeerChannel" as const,
-      channelId: chatIdNumber,
+      channelId: bareId,
       accessHash: Long.fromString(config.accessHash || "0"),
     };
-
     const messageById = new Map<number, any>();
     let offsetId = 0;
     const limit = 100;
@@ -977,7 +977,7 @@ export async function listFilesInTopic(
       let minId = offsetId || Infinity;
 
       for (const m of messages) {
-        if (m._ === "message") {
+        if (m._ === "message" || m.id) {
           if (!messageById.has(m.id)) {
             messageById.set(m.id, m);
           }
@@ -1002,8 +1002,9 @@ export async function listFilesInTopic(
     const missingChunkIds: number[] = [];
 
     for (const m of messageById.values()) {
-      if (!m.message) continue;
-      const manifest = parseManifest(m.message);
+      const text = typeof m.message === "string" ? m.message : typeof m.text === "string" ? m.text : "";
+      if (!text) continue;
+      const manifest = parseManifest(text);
       if (manifest && !isChunkOrThumbFileName(manifest.fileName)) {
         manifestItems.push({ msg: m, manifest });
         for (const chunkId of manifest.chunks) {
@@ -1023,7 +1024,7 @@ export async function listFilesInTopic(
 
     if (missingChunkIds.length > 0) {
       try {
-        const chunkMessages: any = await client.getMessages(chatIdNumber, missingChunkIds);
+        const chunkMessages: any = await client.getMessages(getPeerInput(config), missingChunkIds);
         for (const chunkMsg of chunkMessages) {
           if (chunkMsg && chunkMsg.id) {
             messageById.set(chunkMsg.id, chunkMsg);
