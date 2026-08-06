@@ -58,8 +58,14 @@ async function verifyDriveGroup(
 }
 
 /**
- * Scan the user's dialogs looking for a group whose description contains
- * the drive signature hashtag. Returns the config if found, null otherwise.
+ * Scan the user's dialogs looking for an existing drive group.
+ *
+ * Strategy (designed to minimize API calls and avoid FLOOD_WAIT):
+ * 1. Check localStorage cache first and verify it.
+ * 2. Fetch all dialogs (no extra API calls — just the dialog list).
+ * 3. Filter candidates by TITLE only (zero API calls).
+ * 4. For the small set of title-matched candidates, check description and message history.
+ * 5. Score and return the best candidate.
  */
 export async function scanForDriveGroup(
   client: TelegramClient
@@ -73,7 +79,7 @@ export async function scanForDriveGroup(
   }
   const userDriveKey = `${LS_DRIVE}_${userId}`;
 
-  let cachedConfig: DriveConfig | null = null;
+  // --- Step 1: Try cached config ---
   const cached = localStorage.getItem(userDriveKey) || localStorage.getItem(LS_DRIVE);
   if (cached) {
     try {
@@ -81,7 +87,8 @@ export async function scanForDriveGroup(
       if (parsed && parsed.chatId) {
         const verified = await verifyDriveGroup(client, parsed);
         if (verified) {
-          cachedConfig = verified;
+          localStorage.setItem(userDriveKey, JSON.stringify(verified));
+          return verified;
         }
       }
     } catch {
@@ -90,6 +97,7 @@ export async function scanForDriveGroup(
     }
   }
 
+  // --- Step 2: Fetch all dialogs (single paginated request, no getFullChat calls) ---
   const dialogs: any[] = [];
   try {
     for await (const dialog of client.iterDialogs({ limit: 500 })) {
@@ -98,21 +106,17 @@ export async function scanForDriveGroup(
   } catch (err) {
     console.warn("Failed to fetch main dialogs during radar scan:", err);
   }
-
   try {
     for await (const dialog of client.iterDialogs({ limit: 200, folder: 1 })) {
       dialogs.push(dialog);
     }
   } catch {
-    // folder: 1 might fail if there are no archived dialogs
+    // archived folder might fail
   }
 
-  const candidates: {
-    config: DriveConfig;
-    bareId: number;
-    hasSignature: boolean;
-    manifestCount: number;
-  }[] = [];
+  // --- Step 3: Filter by TITLE only (zero API calls) ---
+  const TITLE_KEYWORDS = ["drive", "clash", "cloud", "storage", "vault", "tg cloud"];
+  const titleCandidates: any[] = [];
 
   for (const dialog of dialogs) {
     const chat = dialog.chat;
@@ -128,44 +132,59 @@ export async function scanForDriveGroup(
       continue;
     }
 
+    const titleLower = (chat.title || "").toLowerCase();
+    if (TITLE_KEYWORDS.some((kw) => titleLower.includes(kw))) {
+      titleCandidates.push(chat);
+    }
+  }
+
+  console.log(`[radar] Found ${titleCandidates.length} title-matched candidates out of ${dialogs.length} dialogs`);
+
+  // --- Step 4: For each title candidate, check description + message history ---
+  const scored: {
+    config: DriveConfig;
+    bareId: number;
+    hasSignature: boolean;
+    manifestCount: number;
+  }[] = [];
+
+  for (const chat of titleCandidates) {
     try {
+      // 4a. Check description for signature
       let about = "";
       try {
         const full = await client.getFullChat(chat);
         about = full.bio || "";
       } catch {
-        const bareId = getBareChannelId(chat.id);
-        const accessHash = (chat as any).raw?.accessHash || chat.accessHash || Long.ZERO;
-        const channelInput = {
-          _: "inputChannel" as const,
-          channelId: bareId,
-          accessHash:
-            typeof accessHash === "string"
-              ? Long.fromString(accessHash)
-              : typeof accessHash === "number"
-              ? Long.fromNumber(accessHash)
-              : accessHash || Long.ZERO,
-        };
-        const full: any = await client.call({
-          _: "channels.getFullChannel",
-          channel: channelInput,
-        });
-        about = full.fullChat?.about ?? "";
+        try {
+          const bareId = getBareChannelId(chat.id);
+          const accessHash = (chat as any).raw?.accessHash || chat.accessHash || Long.ZERO;
+          const channelInput = {
+            _: "inputChannel" as const,
+            channelId: bareId,
+            accessHash:
+              typeof accessHash === "string"
+                ? Long.fromString(accessHash)
+                : typeof accessHash === "number"
+                ? Long.fromNumber(accessHash)
+                : accessHash || Long.ZERO,
+          };
+          const full: any = await client.call({
+            _: "channels.getFullChannel",
+            channel: channelInput,
+          });
+          about = full.fullChat?.about ?? "";
+        } catch {
+          // can't get description, continue anyway — we'll check messages
+        }
       }
 
       const hasSignature = about.includes(DRIVE_SIGNATURE);
-      const titleLower = (chat.title || "").toLowerCase();
-      const titleMatch =
-        titleLower.includes("drive") ||
-        titleLower.includes("clash") ||
-        titleLower.includes("cloud") ||
-        titleLower.includes("storage") ||
-        titleLower.includes("vault") ||
-        titleLower.includes("tg");
 
+      // 4b. Check message history for segmented_file manifests
       let manifestCount = 0;
 
-      // 1. Scan forum topics if forum supergroup
+      // Check forum topics
       try {
         const markedIdNum = Number(getMarkedChannelId(chat.id));
         const bareId = getBareChannelId(chat.id);
@@ -183,6 +202,7 @@ export async function scanForDriveGroup(
 
         const topics = await client.getForumTopics(markedIdNum).catch(() => []);
         for (const topic of topics) {
+          if (manifestCount > 0) break; // found manifests, no need to check more topics
           try {
             const repliesRes: any = await client.call({
               _: "messages.getReplies",
@@ -191,49 +211,41 @@ export async function scanForDriveGroup(
               offsetId: 0,
               offsetDate: 0,
               addOffset: 0,
-              limit: 20,
+              limit: 10,
               maxId: 0,
               minId: 0,
               hash: Long.ZERO,
             });
-            const replyMsgs = repliesRes.messages ?? [];
-            for (const m of replyMsgs) {
+            for (const m of (repliesRes.messages ?? [])) {
               const text = typeof m.message === "string" ? m.message : typeof m.text === "string" ? m.text : "";
-              if (
-                text.includes('"type":"segmented_file"') ||
-                text.includes("segmented_file") ||
-                parseManifest(text) !== null
-              ) {
+              if (text && (text.includes('"segmented_file"') || parseManifest(text) !== null)) {
                 manifestCount++;
               }
             }
           } catch {
-            // topic replies check failed
+            // topic check failed
           }
         }
       } catch {
-        // topics check failed
+        // forum topics check failed
       }
 
-      // 2. Scan general history
-      try {
-        const history = await client.getHistory(chat, { limit: 50 });
-        for (const msg of history) {
-          if (msg && msg.text) {
-            if (
-              msg.text.includes('"type":"segmented_file"') ||
-              msg.text.includes("segmented_file") ||
-              parseManifest(msg.text) !== null
-            ) {
+      // Check general history
+      if (manifestCount === 0) {
+        try {
+          const history = await client.getHistory(chat, { limit: 30 });
+          for (const msg of history) {
+            if (msg && msg.text && (msg.text.includes('"segmented_file"') || parseManifest(msg.text) !== null)) {
               manifestCount++;
             }
           }
+        } catch {
+          // history check failed
         }
-      } catch {
-        // history check failed
       }
 
-      if (hasSignature || titleMatch || manifestCount > 0) {
+      // Only add if we found something meaningful
+      if (hasSignature || manifestCount > 0) {
         const markedId = getMarkedChannelId(chat.id);
         const bareId = getBareChannelId(chat.id);
         const accessHashStr = (chat as any).raw?.accessHash
@@ -248,39 +260,29 @@ export async function scanForDriveGroup(
           accessHash: accessHashStr,
         };
 
-        candidates.push({ config, bareId, hasSignature, manifestCount });
+        scored.push({ config, bareId, hasSignature, manifestCount });
+        console.log(`[radar] Candidate: "${chat.title}" sig=${hasSignature} manifests=${manifestCount} bareId=${bareId}`);
       }
     } catch (err) {
-      console.warn("Error checking chat in scanForDriveGroup:", chat.title, err);
+      console.warn("[radar] Error checking candidate:", chat.title, err);
       continue;
     }
   }
 
-  if (candidates.length > 0) {
-    // Sort candidates:
-    // 1. Groups with actual file manifest messages first (manifestCount DESC)
-    // 2. Groups with signature next (hasSignature DESC)
-    // 3. Oldest group by creation bareId next (bareId ASC)
-    candidates.sort((a, b) => {
-      if (b.manifestCount !== a.manifestCount) {
-        return b.manifestCount - a.manifestCount;
-      }
-      if (b.hasSignature !== a.hasSignature) {
-        return (b.hasSignature ? 1 : 0) - (a.hasSignature ? 1 : 0);
-      }
+  if (scored.length > 0) {
+    scored.sort((a, b) => {
+      if (b.manifestCount !== a.manifestCount) return b.manifestCount - a.manifestCount;
+      if (b.hasSignature !== a.hasSignature) return (b.hasSignature ? 1 : 0) - (a.hasSignature ? 1 : 0);
       return a.bareId - b.bareId;
     });
 
-    const bestConfig = candidates[0].config;
-    localStorage.setItem(userDriveKey, JSON.stringify(bestConfig));
-    return bestConfig;
+    const best = scored[0].config;
+    console.log(`[radar] Selected drive: "${best.chatTitle}" (${best.chatId})`);
+    localStorage.setItem(userDriveKey, JSON.stringify(best));
+    return best;
   }
 
-  if (cachedConfig) {
-    localStorage.setItem(userDriveKey, JSON.stringify(cachedConfig));
-    return cachedConfig;
-  }
-
+  console.warn("[radar] No drive group found among", titleCandidates.length, "candidates");
   return null;
 }
 
