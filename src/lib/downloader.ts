@@ -80,7 +80,7 @@ async function downloadMediaWithWorkers(
 ): Promise<Uint8Array> {
   const targetLocation = message?.media ?? message;
   const buffer = await client.downloadAsBuffer(targetLocation, {
-    partSize: options.partSizeKb || 512,
+    partSize: options.partSizeKb || 1024,
     progressCallback: (dl, total) => {
       options.progressCallback?.(dl, total);
     },
@@ -1111,7 +1111,7 @@ export async function renameDriveFile(
 }
 
 function getDynamicConcurrency() {
-  return { segments: 4, workers: 12 };
+  return { segments: 8, workers: 12 };
 }
 
 export async function downloadFile(
