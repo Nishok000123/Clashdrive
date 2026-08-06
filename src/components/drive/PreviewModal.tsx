@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { DriveFile } from "../../types";
+import type { DriveFile, DriveConfig } from "../../types";
+import type { TelegramClient } from "@mtcute/web";
 import { formatBytes } from "../../lib/manifest";
 import { FileIcon } from "./FileIcon";
+import { FileCardThumbnail } from "./FileCardThumbnail";
 
 type SheetCell = string | number | boolean | Date | null | undefined;
 type SheetRow = SheetCell[];
@@ -184,6 +186,8 @@ interface PreviewModalProps {
   isLiked?: boolean;
   onToggleLike?: () => void;
   onOpenMoveCopy?: () => void;
+  client?: TelegramClient | null;
+  driveConfig?: DriveConfig | null;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -217,6 +221,8 @@ export function PreviewModal({
   isLiked = false,
   onToggleLike,
   onOpenMoveCopy,
+  client,
+  driveConfig,
 }: PreviewModalProps) {
   // ─── Core modal state ───
   const [closing, setClosing] = useState(false);
@@ -1293,14 +1299,14 @@ export function PreviewModal({
           </button>
 
           {/* File icon + name */}
-          <div className="w-8 h-8 rounded-lg bg-white/[0.06] flex items-center justify-center shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-white/[0.06] flex items-center justify-center shrink-0 hidden sm:flex">
             <FileIcon fileName={file.name} className="w-4 h-4" />
           </div>
-          <div className="min-w-0 flex-1">
-            <h3 className="font-semibold text-white/95 truncate text-[13px] sm:text-sm leading-tight">{file.name}</h3>
-            <p className="text-[10px] text-white/40 font-medium mt-0.5 leading-none">
-              {formatBytes(file.size)} • {fileDateStr}
-              {file.uploaderName && <span> • {file.uploaderName}</span>}
+          <div className="min-w-0 flex-1 flex flex-col justify-center overflow-hidden">
+            <h3 className="font-semibold text-white/95 truncate text-xs sm:text-sm leading-tight">{file.name}</h3>
+            <p className="text-[10px] text-white/40 font-medium truncate mt-0.5 leading-tight">
+              {formatBytes(file.size)} <span className="hidden sm:inline">• {fileDateStr}</span>
+              {file.uploaderName && <span className="hidden md:inline"> • {file.uploaderName}</span>}
             </p>
           </div>
 
@@ -1539,15 +1545,21 @@ export function PreviewModal({
                     autoPlay
                     playsInline
                     preload="auto"
-                    crossOrigin="anonymous"
-                    onPlay={() => { setVideoPlaying(true); resetControlsTimer(); }}
+                    onPlay={() => { setVideoPlaying(true); resetControlsTimer(); setBuffering(false); }}
                     onPause={() => { setVideoPlaying(false); setControlsVisible(true); }}
                     onTimeUpdate={onVideoTimeUpdate}
-                    onLoadedMetadata={() => { if (videoRef.current) setVideoDuration(videoRef.current.duration); }}
+                    onLoadedMetadata={() => { if (videoRef.current) setVideoDuration(videoRef.current.duration); setBuffering(false); }}
+                    onLoadedData={() => setBuffering(false)}
+                    onCanPlay={() => setBuffering(false)}
+                    onCanPlayThrough={() => setBuffering(false)}
                     onSeeking={() => setBuffering(true)}
                     onSeeked={() => setBuffering(false)}
                     onWaiting={() => setBuffering(true)}
                     onPlaying={() => setBuffering(false)}
+                    onError={(e) => {
+                      console.error("Video element playback error:", e);
+                      setBuffering(false);
+                    }}
                     className="max-w-full max-h-full object-contain"
                   />
 
@@ -1717,14 +1729,20 @@ export function PreviewModal({
                       </div>
                     ) : (
                       <>
-                        {/* Album art placeholder / Visualizer */}
-                        <div className="relative w-32 h-32 sm:w-40 sm:h-40 mx-auto overflow-hidden rounded-2xl border border-white/[0.06] shadow-inner bg-slate-900 flex items-center justify-center">
+                        {/* Album art cover / Visualizer */}
+                        <div className="relative w-36 h-36 sm:w-44 sm:h-44 mx-auto overflow-hidden rounded-2xl border border-white/10 shadow-2xl bg-slate-900 flex items-center justify-center group">
+                          <FileCardThumbnail
+                            file={file}
+                            client={client}
+                            driveConfig={driveConfig}
+                            className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                          />
                           <canvas 
                             ref={canvasRef} 
-                            className="absolute inset-0 w-full h-full pointer-events-none" 
+                            className="absolute inset-0 w-full h-full pointer-events-none opacity-40 mix-blend-screen" 
                           />
-                          <div className={`z-10 w-16 h-16 rounded-full bg-black/45 backdrop-blur-md border border-white/10 flex items-center justify-center transition-all ${audioPlaying ? "scale-90 opacity-40 hover:opacity-100" : "scale-100"}`}>
-                            <svg className="w-8 h-8 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <div className={`z-10 w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-black/50 backdrop-blur-md border border-white/20 flex items-center justify-center transition-all ${audioPlaying ? "scale-90 opacity-40 hover:opacity-100" : "scale-100 shadow-lg"}`}>
+                            <svg className="w-6 h-6 sm:w-7 sm:h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
                             </svg>
                           </div>
@@ -1740,7 +1758,6 @@ export function PreviewModal({
                           ref={audioRef}
                           src={isDsd ? (dsdDecodedUrl || "") : (url || "")}
                           preload="auto"
-                          crossOrigin="anonymous"
                           onTimeUpdate={() => { if (audioRef.current) setAudioTime(audioRef.current.currentTime); }}
                           onLoadedMetadata={() => { if (audioRef.current) setAudioDuration(audioRef.current.duration); }}
                           onEnded={() => setAudioPlaying(false)}

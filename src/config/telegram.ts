@@ -1,9 +1,19 @@
+declare const Bun: any;
+
 /**
- * Retrieve Telegram MTProto API credentials dynamically from localStorage.
+ * Retrieve Telegram MTProto API credentials dynamically from localStorage or native Bun.env.
  */
 export function getApiCredentials(): { apiId: number; apiHash: string } {
-  const idStr = localStorage.getItem("tgcd_api_id") || "";
-  const hash = localStorage.getItem("tgcd_api_hash") || "";
+  let envApiId: string | undefined;
+  let envApiHash: string | undefined;
+
+  if (typeof Bun !== "undefined" && Bun.env) {
+    envApiId = Bun.env.VITE_TELEGRAM_API_ID || Bun.env.TELEGRAM_API_ID;
+    envApiHash = Bun.env.VITE_TELEGRAM_API_HASH || Bun.env.TELEGRAM_API_HASH;
+  }
+
+  const idStr = localStorage.getItem("tgcd_api_id") || envApiId || "";
+  const hash = localStorage.getItem("tgcd_api_hash") || envApiHash || "";
   return {
     apiId: idStr ? parseInt(idStr, 10) : 0,
     apiHash: hash,

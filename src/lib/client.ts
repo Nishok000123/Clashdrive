@@ -1,14 +1,16 @@
-import { TelegramClient } from "telegram";
-import { StringSession } from "telegram/sessions";
+import { TelegramClient, MemoryStorage } from "@mtcute/web";
+import { convertFromGramjsSession } from "@mtcute/convert";
 import { getApiCredentials, LS_SESSION, DEVICE_MODEL, SYSTEM_VERSION, APP_VERSION } from "../config/telegram";
 
 let _client: TelegramClient | null = null;
+let _cachedSessionString: string = "";
 let _monitorInterval: ReturnType<typeof setInterval> | null = null;
 let _reconnecting = false;
 const _connectionListeners = new Set<(connected: boolean) => void>();
 
-// Simple mutex to prevent race conditions in getClient()
 let _clientInitPromise: Promise<TelegramClient> | null = null;
+
+let _isConnected = false;
 
 /**
  * Register an active client singleton instance.
@@ -18,71 +20,84 @@ export function setClient(client: TelegramClient): void {
   void destroyHelperClients();
   _client = client;
   _clientInitPromise = null;
+  _isConnected = true;
+}
+
+/**
+ * Create a new TelegramClient from a session string (GramJS or @mtcute format).
+ */
+export async function createClientFromSession(
+  sessionString = "",
+  apiId?: number,
+  apiHash?: string
+): Promise<TelegramClient> {
+  const creds = getApiCredentials();
+  const id = apiId ?? creds.apiId;
+  const hash = apiHash ?? creds.apiHash;
+
+  const client = new TelegramClient({
+    apiId: id,
+    apiHash: hash,
+    storage: new MemoryStorage(),
+  });
+
+  if (sessionString) {
+    try {
+      if (sessionString.startsWith("11") || sessionString.length > 50) {
+        try {
+          const converted = convertFromGramjsSession(sessionString);
+          await client.importSession(converted);
+        } catch {
+          await client.importSession(sessionString);
+        }
+      } else {
+        await client.importSession(sessionString);
+      }
+    } catch (e) {
+      console.warn("[tgcd] Session import warning:", e);
+    }
+  }
+
+  return client;
 }
 
 /**
  * Build (or return existing) TelegramClient with the saved session string.
- * Callers must await `.connect()` themselves if the client isn't live yet.
  */
 export function getClient(): TelegramClient {
   if (_client) return _client;
 
-  if (_clientInitPromise) return _clientInitPromise as any; // Return pending promise
+  if (_clientInitPromise) return _clientInitPromise as any;
 
   _clientInitPromise = (async () => {
     const saved = localStorage.getItem(LS_SESSION) ?? "";
-    const session = new StringSession(saved);
     const { apiId, apiHash } = getApiCredentials();
 
-    _client = new TelegramClient(session, apiId, apiHash, {
-      connectionRetries: 10,
-      useWSS: true,
-      autoReconnect: true,
-      floodSleepThreshold: 300,
-      maxConcurrentDownloads: 128,
-      deviceModel: DEVICE_MODEL,
-      systemVersion: SYSTEM_VERSION,
-      appVersion: APP_VERSION,
-    });
-
+    _client = await createClientFromSession(saved, apiId, apiHash);
     return _client;
   })();
 
   return _clientInitPromise as any;
 }
 
-export function createClientFromSession(
-  sessionString = "",
-  apiId?: number,
-  apiHash?: string
-): TelegramClient {
-  const creds = getApiCredentials();
-  const id = apiId ?? creds.apiId;
-  const hash = apiHash ?? creds.apiHash;
-  return new TelegramClient(new StringSession(sessionString), id, hash, {
-    connectionRetries: 10,
-    useWSS: true,
-    autoReconnect: true,
-    floodSleepThreshold: 300,
-    maxConcurrentDownloads: 128,
-    deviceModel: DEVICE_MODEL,
-    systemVersion: SYSTEM_VERSION,
-    appVersion: APP_VERSION,
-  });
-}
-
 /**
  * Persist the current session token so next page-load skips login.
  */
-export function persistSession(): void {
-  if (!_client) return;
-  const token = (_client.session as StringSession).save();
-  localStorage.setItem(LS_SESSION, token);
+export async function persistSession(): Promise<string> {
+  if (!_client) return "";
+  try {
+    const token = await _client.exportSession();
+    _cachedSessionString = token;
+    localStorage.setItem(LS_SESSION, token);
+    return token;
+  } catch (err) {
+    console.warn("Failed to export session:", err);
+    return _cachedSessionString || localStorage.getItem(LS_SESSION) || "";
+  }
 }
 
 export function getCurrentSessionString(): string {
-  if (!_client) return localStorage.getItem(LS_SESSION) ?? "";
-  return (_client.session as StringSession).save();
+  return _cachedSessionString || localStorage.getItem(LS_SESSION) || "";
 }
 
 /**
@@ -92,9 +107,13 @@ export async function destroyClient(): Promise<void> {
   stopConnectionMonitor();
   await destroyHelperClients();
   if (_client) {
-    await _client.disconnect();
+    try {
+      await _client.destroy();
+    } catch { /* ignore */ }
     _client = null;
   }
+  _isConnected = false;
+  _cachedSessionString = "";
   localStorage.removeItem(LS_SESSION);
 }
 
@@ -108,7 +127,6 @@ export function hasPersistedSession(): boolean {
 
 /**
  * Subscribe to connection health changes.
- * Listener receives `true` when the connection is restored, `false` when lost.
  */
 export function onConnectionChange(listener: (connected: boolean) => void): () => void {
   _connectionListeners.add(listener);
@@ -123,13 +141,18 @@ function notifyConnectionListeners(connected: boolean) {
 
 /**
  * Check if the client's underlying connection is alive.
- * Uses the internal `connected` property from GramJS.
  */
 export function isClientConnected(): boolean {
   if (!_client) return false;
+  if (_isConnected) return true;
   try {
-    // GramJS exposes `connected` on the client
-    return !!(_client as unknown as { connected?: boolean }).connected;
+    const isConn = Boolean(
+      (_client as any).isConnected ||
+      (_client as any)._net?.isConnected ||
+      (_client as any)._client?._connected
+    );
+    if (isConn) _isConnected = true;
+    return isConn;
   } catch {
     return false;
   }
@@ -137,13 +160,11 @@ export function isClientConnected(): boolean {
 
 /**
  * Ensure the client is connected. If disconnected, attempt reconnection.
- * Safe to call before any API operation.
  */
 export async function ensureConnected(): Promise<boolean> {
   if (!_client) return false;
   if (isClientConnected()) return true;
   if (_reconnecting) {
-    // Wait for the ongoing reconnection attempt
     await new Promise((r) => setTimeout(r, 2000));
     return isClientConnected();
   }
@@ -152,10 +173,12 @@ export async function ensureConnected(): Promise<boolean> {
   try {
     console.warn("[tgcd] Client disconnected, attempting reconnect...");
     await _client.connect();
+    _isConnected = true;
     console.debug("[tgcd] Reconnected successfully.");
     notifyConnectionListeners(true);
     return true;
   } catch (err) {
+    _isConnected = false;
     console.error("[tgcd] Reconnection failed:", err);
     notifyConnectionListeners(false);
     return false;
@@ -165,12 +188,10 @@ export async function ensureConnected(): Promise<boolean> {
 }
 
 /**
- * Start a background monitor that periodically checks the connection
- * and reconnects if needed. Should be called once after successful auth.
+ * Start a background monitor that periodically checks the connection.
  */
 export function startConnectionMonitor(): void {
   stopConnectionMonitor();
-  // Check every 15 seconds
   _monitorInterval = setInterval(async () => {
     if (!_client || _reconnecting) return;
     if (!isClientConnected()) {
@@ -190,16 +211,62 @@ export function stopConnectionMonitor(): void {
   }
 }
 
-const _helperClients: TelegramClient[] = [];
+const MAX_HELPER_CLIENTS = 6;
+const _helperClients: (TelegramClient | Promise<TelegramClient> | null)[] = new Array(MAX_HELPER_CLIENTS).fill(null);
 
 /**
- * Returns the primary connected TelegramClient instance.
- * Shares the single authenticated MTProto session to prevent AUTH_KEY_DUPLICATED errors.
+ * Returns a connected TelegramClient instance from the connection pool.
+ * Slot 0 is the primary _client. Slots 1..5 are auxiliary helper clients.
  */
-export async function getHelperClient(_index?: number): Promise<TelegramClient> {
-  const client = getClient();
+export async function getHelperClient(index?: number): Promise<TelegramClient> {
+  const primaryClient = getClient();
   await ensureConnected();
-  return client;
+
+  if (index === undefined || index === 0) {
+    return primaryClient;
+  }
+
+  const slot = Math.abs(index) % MAX_HELPER_CLIENTS;
+  if (slot === 0) {
+    return primaryClient;
+  }
+
+  const helperSlot = slot - 1;
+  const existing = _helperClients[helperSlot];
+
+  if (existing instanceof Promise) {
+    try {
+      return await existing;
+    } catch {
+      _helperClients[helperSlot] = null;
+      return primaryClient;
+    }
+  }
+
+  if (existing) {
+    return existing;
+  }
+
+  const sessionStr = getCurrentSessionString();
+  if (!sessionStr) {
+    return primaryClient;
+  }
+
+  const initPromise = (async () => {
+    try {
+      const helper = await createClientFromSession(sessionStr);
+      await helper.connect();
+      _helperClients[helperSlot] = helper;
+      return helper;
+    } catch (err) {
+      console.warn(`[tgcd] Failed to initialize helper client slot ${slot}:`, err);
+      _helperClients[helperSlot] = null;
+      return primaryClient;
+    }
+  })();
+
+  _helperClients[helperSlot] = initPromise;
+  return await initPromise;
 }
 
 /**
@@ -207,12 +274,17 @@ export async function getHelperClient(_index?: number): Promise<TelegramClient> 
  */
 export async function destroyHelperClients(): Promise<void> {
   for (let i = 0; i < _helperClients.length; i++) {
-    const client = _helperClients[i];
-    if (client) {
+    const item = _helperClients[i];
+    if (item) {
       try {
-        await client.disconnect();
+        const client = item instanceof Promise ? await item : item;
+        if (client && client !== _client) {
+          await client.destroy();
+        }
       } catch { /* ignore */ }
     }
+    _helperClients[i] = null;
   }
-  _helperClients.length = 0;
 }
+
+

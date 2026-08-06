@@ -103,23 +103,23 @@ export function Header({
 
   return (
     <header className="sticky top-0 z-40 glass border-b border-md-outline-variant/30">
-      <div className="flex items-center justify-between px-4 lg:px-6 h-16 gap-3 sm:gap-4">
+      <div className="flex items-center justify-between px-2.5 sm:px-4 lg:px-6 h-16 gap-1.5 sm:gap-4">
         {/* Hamburger Menu — M3 48dp touch target */}
         {onMenuClick && (
           <button
             onClick={onMenuClick}
-            className="lg:hidden w-12 h-12 rounded-full bg-transparent hover:bg-md-surface-container-high text-md-on-surface-variant flex items-center justify-center transition-all cursor-pointer active:scale-90 shrink-0"
+            className="lg:hidden w-9 h-9 sm:w-11 sm:h-11 rounded-full bg-transparent hover:bg-md-surface-container-high text-md-on-surface-variant flex items-center justify-center transition-all cursor-pointer active:scale-90 shrink-0"
             title="Open Menu"
           >
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
         )}
 
         {/* Logo */}
-        <div className="flex items-center gap-3 shrink-0 select-none">
-          <svg className="w-9 h-9" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <div className="flex items-center gap-2 sm:gap-3 shrink min-w-0 select-none">
+          <svg className="w-7 h-7 sm:w-9 sm:h-9 shrink-0" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
             <defs>
               <linearGradient id="header-logo-bg" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stopColor="#24A1DE" />
@@ -136,11 +136,11 @@ export function Header({
             <path d="M51 68l24-15.5L46.5 61l.5 9.5 4-2.5z" fill="#24A1DE" />
             <path d="M75 52.5L46.5 61l15.5 5.5 13-14z" fill="#38BDF8" />
           </svg>
-          <div>
-            <h1 className="text-sm font-bold gradient-text leading-tight flex items-center gap-1.5">
+          <div className="min-w-0 truncate">
+            <h1 className="text-xs sm:text-sm font-bold gradient-text leading-tight flex items-center gap-1 truncate">
               Clash Drive
             </h1>
-            <p className="text-[10px] text-md-on-surface-variant leading-tight font-medium">
+            <p className="text-[10px] text-md-on-surface-variant leading-tight font-medium hidden sm:block truncate">
               {driveTitle === "Clash Drive" || driveTitle === "TG Cloud Drive" ? "Telegram Cloud Storage" : driveTitle}
             </p>
           </div>
@@ -183,7 +183,7 @@ export function Header({
         </div>
 
         {/* Action Controls */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-0.5 sm:gap-1.5 shrink-0">
           {/* Settings Gear — M3 icon button: 48dp, rounded-full */}
           <div className="relative" ref={settingsMenuRef}>
             <button
@@ -194,17 +194,17 @@ export function Header({
                   setShowSettingsMenu(!showSettingsMenu);
                 }
               }}
-              className="w-10 h-10 rounded-full hover:bg-md-surface-container-high text-md-on-surface-variant flex items-center justify-center transition-all cursor-pointer active:scale-95"
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full hover:bg-md-surface-container-high text-md-on-surface-variant flex items-center justify-center transition-all cursor-pointer active:scale-95"
               title="Settings & Profile"
             >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
             </button>
 
             {showSettingsMenu && (
-              <div className="absolute right-0 top-12 z-50 bg-md-surface-container rounded-[16px] p-4 w-72 animate-scale-in border border-md-outline-variant/20 space-y-3.5 select-none" style={{ boxShadow: 'var(--md-elevation-2)' }}>
+              <div className="absolute right-0 top-12 z-50 bg-md-surface-container rounded-[16px] p-4 w-72 max-w-[calc(100vw-1.5rem)] animate-scale-in border border-md-outline-variant/20 space-y-3.5 select-none" style={{ boxShadow: 'var(--md-elevation-2)' }}>
                 <div className="flex items-center justify-between border-b border-md-outline-variant/20 pb-2">
                   <h3 className="text-xs font-bold text-md-on-surface uppercase tracking-wider">Drive Settings</h3>
                   <span className="text-[10px] font-bold bg-md-primary-container text-md-on-primary-container px-2 py-0.5 rounded-full">
@@ -295,21 +295,21 @@ export function Header({
           <div className="relative" ref={themeMenuRef}>
             <button
               onClick={() => setShowThemeMenu(!showThemeMenu)}
-              className="w-10 h-10 rounded-full hover:bg-md-surface-container-high text-md-on-surface-variant flex items-center justify-center transition-all cursor-pointer active:scale-95"
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full hover:bg-md-surface-container-high text-md-on-surface-variant flex items-center justify-center transition-all cursor-pointer active:scale-95"
               title="Switch Theme"
             >
               {theme === "light" && (
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z" />
                 </svg>
               )}
               {theme === "dark" && (
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
                 </svg>
               )}
               {theme === "system" && (
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path d="M12 3v18" />
                   <path d="M12 3a9 9 0 110 18 9 9 0 010-18z" />
                   <path d="M12 3a9 9 0 010 18v-18z" fill="currentColor" />
@@ -362,23 +362,23 @@ export function Header({
           <div className="relative">
             <button
               onClick={() => setShowDropdown(!showDropdown)}
-              className="flex items-center gap-2 p-1 rounded-full hover:bg-md-surface-container-high transition-all cursor-pointer"
+              className="flex items-center gap-1.5 p-0.5 sm:p-1 rounded-full hover:bg-md-surface-container-high transition-all cursor-pointer"
             >
               {userProfile?.avatarUrl ? (
                 <img
                   src={userProfile.avatarUrl}
                   alt={displayName}
-                  className="w-8 h-8 rounded-full object-cover ring-2 ring-md-primary/20"
+                  className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover ring-2 ring-md-primary/20"
                 />
               ) : (
-                <div className="w-8 h-8 rounded-full bg-md-primary-container text-md-on-primary-container font-bold text-xs flex items-center justify-center">
+                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-md-primary-container text-md-on-primary-container font-bold text-xs flex items-center justify-center">
                   {initials}
                 </div>
               )}
             </button>
 
             {showDropdown && (
-              <div className="absolute right-0 top-12 z-50 bg-md-surface-container rounded-[16px] p-3 w-64 animate-scale-in border border-md-outline-variant/20 space-y-3 select-none" style={{ boxShadow: 'var(--md-elevation-2)' }}>
+              <div className="absolute right-0 top-12 z-50 bg-md-surface-container rounded-[16px] p-3 w-64 max-w-[calc(100vw-1.5rem)] animate-scale-in border border-md-outline-variant/20 space-y-3 select-none" style={{ boxShadow: 'var(--md-elevation-2)' }}>
                 <div className="px-2 py-1 border-b border-md-outline-variant/20 pb-2">
                   <p className="text-xs font-bold text-md-on-surface truncate">{displayName}</p>
                   <p className="text-[10px] text-md-on-surface-variant font-medium truncate mt-0.5">

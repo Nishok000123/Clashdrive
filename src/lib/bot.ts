@@ -1,5 +1,5 @@
-import { TelegramClient, Api } from "telegram";
-import bigInt from "big-integer";
+import { TelegramClient } from "@mtcute/web";
+import { Long } from "@mtcute/core";
 import type { DriveConfig } from "../types";
 
 /**
@@ -43,10 +43,11 @@ export async function ensureBotIsAdmin(
   }
 
   try {
-    const channelPeer = new Api.InputPeerChannel({
-      channelId: bigInt(config.chatId),
-      accessHash: bigInt(config.accessHash || "0"),
-    });
+    const channelInput = {
+      _: "inputChannel" as const,
+      channelId: Number(config.chatId),
+      accessHash: Long.fromString(config.accessHash || "0"),
+    };
 
     // 1. Kick/remove old bot instances from user's Drive channel
     const oldBotsToKick = [
@@ -60,50 +61,57 @@ export async function ensureBotIsAdmin(
         let oldBotUser: any = null;
         if (old.name) {
           try {
-            oldBotUser = await client.getEntity(old.name);
+            oldBotUser = await client.resolvePeer(old.name);
           } catch { /* ignore */ }
         }
         if (!oldBotUser && old.id) {
           try {
-            oldBotUser = await client.getEntity(bigInt(old.id));
+            oldBotUser = await client.resolvePeer(Number(old.id));
           } catch { /* ignore */ }
         }
 
         if (oldBotUser) {
-          const kickBannedRights = new Api.ChatBannedRights({
-            viewMessages: true,
-            sendMessages: true,
-            sendMedia: true,
-            untilDate: 0,
+          await client.call({
+            _: "channels.editBanned",
+            channel: channelInput,
+            participant: oldBotUser,
+            bannedRights: {
+              _: "chatBannedRights",
+              viewMessages: true,
+              sendMessages: true,
+              sendMedia: true,
+              untilDate: 0,
+            },
           });
-          await client.invoke(
-            new Api.channels.EditBanned({
-              channel: channelPeer,
-              participant: oldBotUser,
-              bannedRights: kickBannedRights,
-            })
-          );
         }
       } catch (kickErr) {
-        // Ignore if old bot was not found or already removed
         console.debug("[bot] Cleanup check:", kickErr);
       }
     }
 
     // 2. Resolve new bot entity using username or user ID
-    let botUser: any = null;
+    let botUserPeer: any = null;
     try {
-      botUser = await client.getEntity(BOT_USERNAME);
+      botUserPeer = await client.resolvePeer(BOT_USERNAME);
     } catch {
       try {
-        botUser = await client.getEntity(bigInt(BOT_ID));
+        botUserPeer = await client.resolvePeer(Number(BOT_ID));
       } catch {
         try {
-          const res = await client.invoke(
-            new Api.contacts.Search({ q: BOT_USERNAME, limit: 5 })
-          );
+          const res = await client.call({
+            _: "contacts.search",
+            q: BOT_USERNAME,
+            limit: 5,
+          });
           if (res.users && res.users.length > 0) {
-            botUser = res.users[0];
+            const u = res.users[0];
+            if (u._ === "user") {
+              botUserPeer = {
+                _: "inputPeerUser" as const,
+                userId: u.id,
+                accessHash: u.accessHash || Long.ZERO,
+              };
+            }
           }
         } catch (searchErr) {
           console.warn("[bot] Search failed:", searchErr);
@@ -111,7 +119,7 @@ export async function ensureBotIsAdmin(
       }
     }
 
-    if (!botUser) {
+    if (!botUserPeer) {
       return {
         success: false,
         message: `Could not locate Telegram bot @${BOT_USERNAME}. Please start the bot first.`,
@@ -120,12 +128,16 @@ export async function ensureBotIsAdmin(
 
     // 3. Invite new bot to channel
     try {
-      await client.invoke(
-        new Api.channels.InviteToChannel({
-          channel: channelPeer,
-          users: [botUser],
-        })
-      );
+      const inputUser =
+        botUserPeer._ === "inputPeerUser"
+          ? { _: "inputUser" as const, userId: botUserPeer.userId, accessHash: botUserPeer.accessHash }
+          : botUserPeer;
+
+      await client.call({
+        _: "channels.inviteToChannel",
+        channel: channelInput,
+        users: [inputUser],
+      });
     } catch (inviteErr: any) {
       const errStr = String(inviteErr);
       if (!errStr.includes("USER_ALREADY_PARTICIPANT")) {
@@ -134,7 +146,8 @@ export async function ensureBotIsAdmin(
     }
 
     // 4. Promote new bot to Admin with full permissions
-    const adminRights = new Api.ChatAdminRights({
+    const adminRights = {
+      _: "chatAdminRights" as const,
       changeInfo: true,
       postMessages: true,
       editMessages: true,
@@ -147,16 +160,20 @@ export async function ensureBotIsAdmin(
       manageCall: false,
       other: true,
       manageTopics: true,
-    });
+    };
 
-    await client.invoke(
-      new Api.channels.EditAdmin({
-        channel: channelPeer,
-        userId: botUser,
-        adminRights,
-        rank: "File Sharing Bot",
-      })
-    );
+    const inputUserForAdmin =
+      botUserPeer._ === "inputPeerUser"
+        ? { _: "inputUser" as const, userId: botUserPeer.userId, accessHash: botUserPeer.accessHash }
+        : botUserPeer;
+
+    await client.call({
+      _: "channels.editAdmin",
+      channel: channelInput,
+      userId: inputUserForAdmin,
+      adminRights,
+      rank: "File Sharing Bot",
+    });
 
     return {
       success: true,

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import type { TelegramClient } from "telegram";
+import type { TelegramClient } from "@mtcute/web";
 import type { DriveFile, DriveConfig } from "../../types";
 import { formatBytes } from "../../lib/manifest";
 import { FileIcon } from "./FileIcon";

@@ -1,13 +1,13 @@
 # Clash Drive (v2.0.0)
 
-A serverless, client-side web application that transforms Telegram supergroup forum topics into a personal cloud storage workspace. Run entirely in your browser with direct Telegram Datacenter connections via MTProto.
+A serverless, client-side web application built natively on Bun that transforms Telegram supergroup forum topics into a personal cloud storage workspace. Run entirely in your browser with direct Telegram Datacenter connections via `@mtcute` MTProto.
 
 ---
 
 ## 🚀 Key Features
 
 ### 📦 Storage & File Management
-- **Serverless Architecture:** Runs fully in the browser with direct MTProto TCP/WebSocket connections to Telegram production DCs. No server-side storage or API keys are proxied.
+- **Serverless Architecture:** Runs fully in the browser with direct MTProto TCP/WebSocket connections to Telegram production DCs powered by `@mtcute/web`. No server-side storage or API keys are proxied.
 - **Folder-to-Topic Mapping:** Organizes your storage by mapping root folders directly to Telegram supergroup forum topic threads.
 - **Batch Operations:** Perform batch upload, download, move, copy, and deletion across folders with real-time progress indicators.
 - **Move & Copy Modals:** Easily organize and transfer files between topic folders.
@@ -40,8 +40,9 @@ A serverless, client-side web application that transforms Telegram supergroup fo
 
 ## 🛠️ Tech Stack
 
+- **Runtime Engine:** Bun
 - **Frontend:** React 19, TypeScript, Vite 8, Tailwind CSS v4
-- **Telegram Protocol:** GramJS (`telegram` package) with MTProto WebSockets
+- **Telegram Protocol Engine:** `@mtcute` (`@mtcute/web`, `@mtcute/core`) with MTProto WebSockets
 - **Service Worker:** Custom range-request interceptor (`sw.js`)
 - **Public Edge Worker:** Cloudflare Worker (`worker.js`)
 
@@ -49,27 +50,27 @@ A serverless, client-side web application that transforms Telegram supergroup fo
 
 ## 💻 Local Development
 
-Get a developer instance running locally in seconds:
+Get a developer instance running natively via Bun in seconds:
 
 1. **Install dependencies:**
    ```bash
-   npm install
+   bun install
    ```
 
 2. **Start the local development server:**
    ```bash
-   npm run dev
+   bun dev
    ```
    *The application will run on `http://localhost:5173/` by default.*
 
 3. **Build production bundle:**
    ```bash
-   npm run build
+   bun run build
    ```
 
 4. **Lint codebase:**
    ```bash
-   npm run lint
+   bun run lint
    ```
 
 ---

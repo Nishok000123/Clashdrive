@@ -1,25 +1,27 @@
-import { TelegramClient, Api } from "telegram";
+import { TelegramClient } from "@mtcute/web";
+import { Long } from "@mtcute/core";
 import {
   DRIVE_SIGNATURE,
   DEFAULT_DRIVE_TITLE,
   LS_DRIVE,
 } from "../config/telegram";
 import type { DriveConfig } from "../types";
-import bigInt from "big-integer";
 
 async function verifyDriveGroup(
   client: TelegramClient,
   config: DriveConfig
 ): Promise<DriveConfig | null> {
   try {
-    const channel = new Api.InputPeerChannel({
-      channelId: bigInt(config.chatId),
-      accessHash: bigInt(config.accessHash),
+    const channelInput = {
+      _: "inputChannel" as const,
+      channelId: Number(config.chatId),
+      accessHash: Long.fromString(config.accessHash || "0"),
+    };
+    const full: any = await client.call({
+      _: "channels.getFullChannel",
+      channel: channelInput,
     });
-    const full = await client.invoke(
-      new Api.channels.GetFullChannel({ channel })
-    );
-    const about = (full.fullChat as Api.ChannelFull).about ?? "";
+    const about = full.fullChat?.about ?? "";
     return about.includes(DRIVE_SIGNATURE) ? config : null;
   } catch {
     return null;
@@ -54,50 +56,50 @@ export async function scanForDriveGroup(
 
   const dialogs: any[] = [];
   try {
-    const mainDialogs = await client.getDialogs({ limit: 200 });
-    dialogs.push(...mainDialogs);
+    for await (const dialog of client.iterDialogs({ limit: 200 })) {
+      dialogs.push(dialog);
+    }
   } catch (err) {
     console.warn("Failed to fetch main dialogs during radar scan:", err);
   }
 
   try {
     // Also scan archived dialogs (folder: 1) in case the user archived the drive group
-    const archivedDialogs = await client.getDialogs({ limit: 100, folder: 1 });
-    dialogs.push(...archivedDialogs);
+    for await (const dialog of client.iterDialogs({ limit: 100, folder: 1 })) {
+      dialogs.push(dialog);
+    }
   } catch (err) {
     // folder: 1 might fail if there are no archived dialogs, which is fine
   }
 
   for (const dialog of dialogs) {
-    const entity = dialog.entity;
-    if (!entity) continue;
+    const chat = dialog.chat;
+    if (!chat || (chat.type !== "supergroup" && chat.type !== "channel")) continue;
 
-    // We only care about channels / supergroups
-    if (entity.className !== "Channel") continue;
-    const channel = entity as Api.Channel;
-
-    // OPTIMIZATION: Only verify description if the title matches or contains "drive" or "clash"
-    // This prevents requesting GetFullChannel details on every channel (which causes FloodWait)
-    const titleLower = channel.title.toLowerCase();
+    const titleLower = (chat.title || "").toLowerCase();
     if (!titleLower.includes("drive") && !titleLower.includes("clash")) continue;
 
-    // Pull full info to read the "about" field
     try {
-      const full = await client.invoke(
-        new Api.channels.GetFullChannel({ channel })
-      );
-      const about = (full.fullChat as Api.ChannelFull).about ?? "";
+      const channelInput = {
+        _: "inputChannel" as const,
+        channelId: chat.id,
+        accessHash: chat.accessHash || Long.ZERO,
+      };
+      const full: any = await client.call({
+        _: "channels.getFullChannel",
+        channel: channelInput,
+      });
+      const about = full.fullChat?.about ?? "";
       if (about.includes(DRIVE_SIGNATURE)) {
         const config: DriveConfig = {
-          chatId: channel.id.toString(),
-          chatTitle: channel.title,
-          accessHash: channel.accessHash ? channel.accessHash.toString() : "0",
+          chatId: chat.id.toString(),
+          chatTitle: chat.title,
+          accessHash: chat.accessHash ? chat.accessHash.toString() : "0",
         };
         localStorage.setItem(userDriveKey, JSON.stringify(config));
         return config;
       }
     } catch {
-      // Permission errors, skip
       continue;
     }
   }
@@ -111,17 +113,16 @@ export async function scanForDriveGroup(
 export async function createDriveGroup(
   client: TelegramClient
 ): Promise<DriveConfig> {
-  const result = await client.invoke(
-    new Api.channels.CreateChannel({
-      title: DEFAULT_DRIVE_TITLE,
-      about: `Personal cloud storage powered by Telegram.\n${DRIVE_SIGNATURE}`,
-      megagroup: true,
-      forum: true,
-    })
-  );
+  const result: any = await client.call({
+    _: "channels.createChannel",
+    title: DEFAULT_DRIVE_TITLE,
+    about: `Personal cloud storage powered by Telegram.\n${DRIVE_SIGNATURE}`,
+    megagroup: true,
+    forum: true,
+  });
 
-  const chats = (result as Api.Updates).chats;
-  const channel = chats[0] as Api.Channel;
+  const chats = result.chats || [];
+  const channel = chats[0];
 
   const config: DriveConfig = {
     chatId: channel.id.toString(),

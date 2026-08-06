@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import type { TelegramClient } from "telegram";
+import type { TelegramClient } from "@mtcute/web";
 import { scanForDriveGroup, createDriveGroup } from "../lib/radar";
 import { getTopics, createTopic, deleteTopic, renameTopic } from "../lib/topics";
 import { ensureConnected } from "../lib/client";

@@ -26,3 +26,9 @@ dist-ssr
 # Cloudflare Worker deployment file with credentials
 worker.js
 
+# Locks and Zip archives
+bun.lock
+bun.lockb
+*.zip
+
+

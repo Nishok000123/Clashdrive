@@ -1,5 +1,13 @@
 import type { ChunkManifest } from "../types";
 
+export function isChunkOrThumbFileName(fileName?: string): boolean {
+  if (!fileName) return false;
+  const name = fileName.toLowerCase();
+  if (/\.part\d+(\.|$)/i.test(name)) return true;
+  if (/\.thumb\.(jpg|jpeg|png|webp|gif)$/i.test(name)) return true;
+  return false;
+}
+
 /**
  * Try to parse a message as a file manifest.
  * Returns null if the message text isn't a valid segmented_file JSON payload.
@@ -13,6 +21,7 @@ export function parseManifest(text: string): ChunkManifest | null {
       typeof data.fileName === "string" &&
       data.fileName.length > 0 &&
       data.fileName.length <= 255 &&
+      !isChunkOrThumbFileName(data.fileName) &&
       typeof data.fileSize === "number" &&
       data.fileSize >= 0 &&
       data.fileSize <= 1024 * 1024 * 1024 * 50 && // 50 GB max

@@ -1,6 +1,5 @@
-import { TelegramClient, Api } from "telegram";
+import { TelegramClient } from "@mtcute/web";
 import type { TopicFolder, DriveConfig } from "../types";
-import bigInt from "big-integer";
 
 /**
  * List all forum topics in the drive supergroup.
@@ -11,27 +10,14 @@ export async function getTopics(
   config: DriveConfig
 ): Promise<TopicFolder[]> {
   try {
-    const peer = new Api.InputPeerChannel({ channelId: bigInt(config.chatId), accessHash: bigInt(config.accessHash) });
-    const result = await client.invoke(
-      new Api.channels.GetForumTopics({
-        channel: peer,
-        limit: 100,
-        offsetDate: 0,
-        offsetId: 0,
-        offsetTopic: 0,
-      })
-    );
-
-    const topics = (result as Api.messages.ForumTopics).topics ?? [];
-    return topics
-      .filter((t): t is Api.ForumTopic => t.className === "ForumTopic")
-      .map((t) => ({
-        id: t.id,
-        title: t.title,
-        iconColor: t.iconColor ?? 0x6c63ff,
-        date: t.date,
-        messageCount: 0,
-      }));
+    const topics = await client.getForumTopics(Number(config.chatId));
+    return topics.map((t) => ({
+      id: t.id,
+      title: t.title,
+      iconColor: t.iconColor ?? 0x6c63ff,
+      date: t.date ? Math.floor(t.date.getTime() / 1000) : Math.floor(Date.now() / 1000),
+      messageCount: 0,
+    }));
   } catch (err) {
     console.error("Failed to load topics:", err);
     return [];
@@ -47,29 +33,17 @@ export async function createTopic(
   title: string
 ): Promise<TopicFolder | null> {
   try {
-    const peer = new Api.InputPeerChannel({ channelId: bigInt(config.chatId), accessHash: bigInt(config.accessHash) });
-    const result = await client.invoke(
-      new Api.channels.CreateForumTopic({
-        channel: peer,
-        title,
-        randomId: bigInt(Math.floor(Math.random() * 0xffffffff)),
-      })
-    );
-    const updates = result as Api.Updates;
-    // The new topic ID comes from the first MessageService in updates
-    for (const upd of updates.updates) {
-      if (upd.className === "UpdateNewChannelMessage") {
-        const msg = (upd as Api.UpdateNewChannelMessage).message;
-        return {
-          id: msg.id,
-          title,
-          iconColor: 0x6c63ff,
-          date: Math.floor(Date.now() / 1000),
-          messageCount: 0,
-        };
-      }
-    }
-    return null;
+    const msg = await client.createForumTopic({
+      chatId: Number(config.chatId),
+      title,
+    });
+    return {
+      id: msg.id,
+      title,
+      iconColor: 0x6c63ff,
+      date: Math.floor(Date.now() / 1000),
+      messageCount: 0,
+    };
   } catch (err) {
     console.error("Failed to create topic:", err);
     return null;
@@ -83,17 +57,11 @@ export async function renameTopic(
   title: string
 ): Promise<boolean> {
   try {
-    const peer = new Api.InputPeerChannel({
-      channelId: bigInt(config.chatId),
-      accessHash: bigInt(config.accessHash),
+    await client.editForumTopic({
+      chatId: Number(config.chatId),
+      topicId,
+      title,
     });
-    await client.invoke(
-      new Api.channels.EditForumTopic({
-        channel: peer,
-        topicId,
-        title,
-      })
-    );
     return true;
   } catch (err) {
     console.error("Failed to rename topic:", err);
@@ -110,15 +78,10 @@ export async function deleteTopic(
   topicId: number
 ): Promise<boolean> {
   try {
-    const peer = new Api.InputPeerChannel({ channelId: bigInt(config.chatId), accessHash: bigInt(config.accessHash) });
-    await client.invoke(
-      new Api.channels.DeleteTopicHistory({
-        channel: peer,
-        topMsgId: topicId,
-      })
-    );
+    await client.deleteForumTopicHistory(Number(config.chatId), topicId);
     return true;
-  } catch {
+  } catch (err) {
+    console.error("Failed to delete topic:", err);
     return false;
   }
 }

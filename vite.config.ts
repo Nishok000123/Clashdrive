@@ -1,25 +1,25 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { nodePolyfills } from "vite-plugin-node-polyfills";
 
 export default defineConfig({
+  server: {
+    port: 5173,
+    host: "localhost",
+  },
   plugins: [
     react(),
     tailwindcss(),
-    nodePolyfills({
-      include: ["buffer", "events", "util", "stream", "crypto", "path", "os", "net"],
-      globals: {
-        Buffer: true,
-        global: true,
-        process: true,
-      },
-    }),
   ],
   resolve: {
     alias: {
       "@": "/src",
+      "@mtcute/node/utils.js": "/src/lib/emptyModule.ts",
+      "@mtcute/node": "/src/lib/emptyModule.ts",
     },
+  },
+  optimizeDeps: {
+    exclude: ["@mtcute/convert"],
   },
   build: {
     target: "esnext",

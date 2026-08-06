@@ -6,11 +6,10 @@ import { AuthWizard } from "./components/auth/AuthWizard";
 import { Dashboard } from "./components/drive/Dashboard";
 import { LoadingScreen } from "./components/layout/LoadingScreen";
 import { PreviewModal } from "./components/drive/PreviewModal";
-import { handleStreamRequest, normalizeRenamedFileName, downloadFileToMemory, mimeTypeFromName, preFetchMessages, downloadChunkToCache } from "./lib/downloader";
+import { handleStreamRequest, normalizeRenamedFileName, downloadFileToMemory, mimeTypeFromName, preFetchMessages } from "./lib/downloader";
 
 import { useTheme } from "./hooks/useTheme";
 import type { DriveFile, TopicFolder } from "./types";
-import { Api } from "telegram";
 import { Modal } from "./components/ui/Modal";
 import { ShareModal } from "./components/drive/ShareModal";
 import { ReceiveShareModal } from "./components/drive/ReceiveShareModal";
@@ -33,18 +32,27 @@ function getPreviewKind(file: DriveFile) {
   const ext = fileExtension(file.name);
   const mimeType = file.mimeType || "";
 
-  if (mimeType.startsWith("video/") || ["mp4", "webm", "ogg", "mov", "mkv", "avi", "3gp", "flv", "ts", "mts", "m2ts", "wmv"].includes(ext)) return "stream";
-  if (mimeType.startsWith("audio/") || ["mp3", "wav", "m4a", "flac", "ogg", "opus", "oga", "caf", "aac", "dsf", "dff"].includes(ext)) return "stream";
-  if (mimeType === "application/pdf" || ext === "pdf") return "stream";
-  if (["txt", "md", "json", "js", "ts", "py", "rs", "go", "html", "css", "xml"].includes(ext)) return "stream";
+  // Streaming media: Videos and Audio
+  if (
+    mimeType.startsWith("video/") ||
+    ["mp4", "webm", "ogg", "mov", "mkv", "avi", "3gp", "flv", "ts", "mts", "m2ts", "wmv"].includes(ext) ||
+    mimeType.startsWith("audio/") ||
+    ["mp3", "wav", "m4a", "flac", "ogg", "opus", "oga", "caf", "aac", "dsf", "dff", "ape", "alac", "mka"].includes(ext)
+  ) {
+    return "stream";
+  }
 
-  if (mimeType.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext)) {
-    // Large images benefit from streaming (progressive render) instead of full memory download
+  // Images: large images stream for progressive render
+  if (mimeType.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "heic", "tiff"].includes(ext)) {
     if (file.size > LARGE_IMAGE_THRESHOLD) return "stream";
     return "image";
   }
-  if (["xlsx", "xls", "csv", "docx"].includes(ext)) return "office";
+
+  // PDF, EPUB, Docs, and text files download whole file and play/view
+  if (mimeType === "application/pdf" || ext === "pdf") return "memory";
   if (ext === "epub") return "memory";
+  if (["xlsx", "xls", "csv", "docx", "doc"].includes(ext)) return "office";
+  if (["txt", "md", "json", "js", "ts", "py", "rs", "go", "html", "css", "xml"].includes(ext)) return "memory";
 
   return "unsupported";
 }
@@ -55,14 +63,20 @@ async function ensureStreamWorkerReady() {
   try {
     let registration = await navigator.serviceWorker.getRegistration();
     if (!registration) {
-      registration = await navigator.serviceWorker.register(`/sw.js?v=${Date.now()}`);
+      registration = await navigator.serviceWorker.register("/sw.js");
     }
 
     await navigator.serviceWorker.ready;
+    if (registration.active) {
+      try {
+        registration.active.postMessage("CLAIM");
+      } catch (_) {}
+    }
+
     if (navigator.serviceWorker.controller) return true;
 
     await new Promise<void>((resolve) => {
-      const timer = window.setTimeout(resolve, 2500);
+      const timer = window.setTimeout(resolve, 1000);
       const handleControllerChange = () => {
         window.clearTimeout(timer);
         navigator.serviceWorker.removeEventListener("controllerchange", handleControllerChange);
@@ -282,8 +296,7 @@ export default function App() {
     if (!client || !userProfile?.id) return;
     setJoiningChannel(true);
     try {
-      const entity = await client.getEntity("clashgramclient");
-      await client.invoke(new Api.channels.JoinChannel({ channel: entity }));
+      await client.joinChat("clashgramclient");
       triggerToast("Successfully joined Clashgram Update Channel! Thank you for your support.", "success");
     } catch (err) {
       console.warn("Failed to join channel automatically:", err);
@@ -316,9 +329,10 @@ export default function App() {
     setShowJoinPrompt(false);
   }, [userProfile]);
 
-  // Auto-connect on mount
+  // Auto-connect and register stream worker on mount
   useEffect(() => {
     (async () => {
+      ensureStreamWorkerReady().catch(() => {});
       await tryAutoConnect();
       setBooting(false);
     })();
@@ -607,24 +621,29 @@ export default function App() {
           const streamReady = await ensureStreamWorkerReady();
           if (!isCurrentPreview()) return;
 
-          if (!streamReady) {
-            throw new Error("The browser stream worker is not ready yet. Refresh once and try again.");
+          if (streamReady && navigator.serviceWorker.controller) {
+            preFetchMessages(client, driveConfig, file.manifest).catch((err) => {
+              console.warn("Message prefetch failed; stream will fetch on demand:", err);
+            });
+            setPreviewUrl(`/stream/${file.id}`);
+            return;
           }
 
-          // Fire-and-forget: pre-cache chunk 0 and pre-fetch message objects in parallel.
-          // When the <video>/<audio> element issues its first range request via the service worker,
-          // chunk 0 will already be in memory cache → instant playback start.
-          const fileId = file.id.toString();
-          Promise.all([
-            downloadChunkToCache(client, driveConfig, fileId, file.manifest, 0, 2 * 1024 * 1024).catch((err) => {
-              console.warn("Chunk 0 pre-cache failed; stream will fetch on demand:", err);
-            }),
-            preFetchMessages(client, driveConfig, file.manifest).catch((err) => {
-              console.warn("Message prefetch failed; live stream will fetch on demand:", err);
-            }),
-          ]);
-          setPreviewUrl(`/stream/${file.id}`);
+          // Fallback if Service Worker is unavailable (e.g. initial load or SW disabled)
+          console.warn("Service Worker not active, falling back to progressive memory stream.");
+          setPreviewProgress(0);
+          const blob = await downloadFileToMemory(client, driveConfig, file.manifest, (dl, total) => {
+            if (isCurrentPreview()) {
+              setPreviewProgress(total > 0 ? Math.round((dl / total) * 100) : 0);
+            }
+          }, controller.signal);
+          if (!isCurrentPreview()) return;
+          const blobUrl = URL.createObjectURL(blob);
+          previewUrlRef.current = blobUrl;
+          setPreviewProgress(null);
+          setPreviewUrl(blobUrl);
         } catch (err) {
+          if ((err as Error)?.name === "AbortError") return;
           console.error("Streaming preview failed:", err);
           if (isCurrentPreview()) {
             setPreviewProgress(null);
@@ -814,6 +833,8 @@ export default function App() {
       <PreviewModal
         key={previewFile.id}
         file={previewFile}
+        client={client}
+        driveConfig={driveConfig}
         url={previewUrl}
         progress={previewProgress}
         error={previewError}

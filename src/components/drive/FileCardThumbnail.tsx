@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
-import type { TelegramClient } from "telegram";
+import type { TelegramClient } from "@mtcute/web";
 import type { DriveConfig, DriveFile } from "../../types";
-import { downloadChunkToCache, downloadThumbnailById } from "../../lib/downloader";
+import { downloadChunkToCache, downloadThumbnailById, mimeTypeFromName } from "../../lib/downloader";
+import { generateAnyThumbnail } from "../../lib/thumbnailGenerators";
 
 function getPlaceholderConfig(fileName: string): { colorText: string; colorBg: string; emblem: React.ReactNode } {
   const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
@@ -148,7 +149,7 @@ class ConcurrencyQueue {
   }
 }
 
-const thumbnailQueue = new ConcurrencyQueue(2); // Limit concurrent thumbnail downloads to 2
+const thumbnailQueue = new ConcurrencyQueue(6); // Increased concurrency for faster thumbnail rendering
 
 async function loadThumbnail(
   file: DriveFile,
@@ -186,10 +187,23 @@ async function loadThumbnail(
     return promise;
   }
 
-  // 2. Otherwise, if it is an image and <= 3MB:
+  // 2. Otherwise, if thumbnail is not uploaded, generate on-the-fly for images, videos, epubs, pdfs, or any non-archive file <= 6MB:
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-  const isImage = ["png","jpg","jpeg","gif","webp","svg","bmp","avif","heic","tiff"].includes(ext);
-  if (isImage && file.size <= 3 * 1024 * 1024) {
+  const EXCLUDED_THUMB_EXTS = ["zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", "apk", "apks", "xapk", "exe", "msi", "dmg", "pkg", "iso", "bin"];
+  const isExcluded = EXCLUDED_THUMB_EXTS.includes(ext);
+
+  const isVideo = ["mp4", "webm", "mkv", "avi", "mov", "3gp", "flv", "ts"].includes(ext);
+  const isImage = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "heic", "tiff"].includes(ext);
+  const isEpub = ext === "epub";
+  const isPdf = ext === "pdf";
+  const isDocx = ext === "docx" || ext === "doc";
+  const isXlsx = ext === "xlsx" || ext === "xls";
+  const isAudio = ["mp3", "flac", "wav", "m4a", "ogg", "aac", "dsf"].includes(ext);
+
+  const MAX_ON_THE_FLY_SIZE = 3 * 1024 * 1024;
+  const shouldTryOnTheFly = !isExcluded && file.size <= MAX_ON_THE_FLY_SIZE;
+
+  if (shouldTryOnTheFly) {
     if (thumbnailCache.has(file.id)) {
       return thumbnailCache.get(file.id)!;
     }
@@ -200,13 +214,25 @@ async function loadThumbnail(
 
     const promise = thumbnailQueue.run(async () => {
       try {
-        const data = await downloadChunkToCache(client, driveConfig, file.id.toString(), file.manifest, 0);
-        const blob = new Blob([Uint8Array.from(data)], { type: "image/jpeg" });
-        const blobUrl = URL.createObjectURL(blob);
-        thumbnailCache.set(file.id, blobUrl);
-        return blobUrl;
+        const fetchLimit = Math.min(file.size, MAX_ON_THE_FLY_SIZE);
+        const data = await downloadChunkToCache(client, driveConfig, file.id.toString(), file.manifest, 0, fetchLimit);
+        const rawBlob = new Blob([Uint8Array.from(data)]);
+        const thumbBlob = await generateAnyThumbnail(rawBlob, file.name);
+        if (thumbBlob) {
+          const blobUrl = URL.createObjectURL(thumbBlob);
+          thumbnailCache.set(file.id, blobUrl);
+          return blobUrl;
+        }
+        if (isImage) {
+          const mimeType = file.mimeType || mimeTypeFromName(file.name) || "image/jpeg";
+          const blob = new Blob([Uint8Array.from(data)], { type: mimeType });
+          const blobUrl = URL.createObjectURL(blob);
+          thumbnailCache.set(file.id, blobUrl);
+          return blobUrl;
+        }
+        return null;
       } catch (err) {
-        console.warn("Failed to download image chunk 0", file.id, err);
+        console.warn("Failed to generate thumbnail on the fly", file.id, err);
         return null;
       } finally {
         loadingPromises.delete(file.id);
@@ -237,9 +263,12 @@ export function FileCardThumbnail({
   const cfg = getPlaceholderConfig(fileName);
 
   const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
-  const isImage = ["png","jpg","jpeg","gif","webp","svg","bmp","avif","heic","tiff"].includes(ext);
+  const EXCLUDED_THUMB_EXTS = ["zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", "apk", "apks", "xapk", "exe", "msi", "dmg", "pkg", "iso", "bin"];
+  const isExcluded = EXCLUDED_THUMB_EXTS.includes(ext);
+
   const hasUploadedThumb = file.manifest.thumb !== undefined;
-  const canLoadThumb = hasUploadedThumb || (isImage && file.size <= 3 * 1024 * 1024);
+  const MAX_ON_THE_FLY_SIZE = 3 * 1024 * 1024;
+  const canLoadThumb = hasUploadedThumb || (!isExcluded && file.size <= MAX_ON_THE_FLY_SIZE);
 
   const [thumbUrl, setThumbUrl] = useState<string | null>(() => {
     if (hasUploadedThumb) {

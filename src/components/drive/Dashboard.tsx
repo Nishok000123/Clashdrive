@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import type { TelegramClient } from "telegram";
+import type { TelegramClient } from "@mtcute/web";
 import type { DriveConfig, TopicFolder, DriveFile, UploadProgress, DownloadProgress, SavedAccount, UserProfile } from "../../types";
 import type { Theme } from "../../hooks/useTheme";
 import { Header } from "../layout/Header";
@@ -16,6 +16,7 @@ import { FileCardThumbnail } from "./FileCardThumbnail";
 import { MoveCopyModal } from "./MoveCopyModal";
 import { FileInfoModal } from "./FileInfoModal";
 import { SettingsModal } from "./SettingsModal";
+import { FloatingTransferWidget } from "./FloatingTransferWidget";
 
 interface DashboardProps {
   client?: TelegramClient | null;
@@ -410,6 +411,12 @@ export function Dashboard({
 
   return (
     <div className="h-screen max-h-screen overflow-hidden bg-surface-50 dark:bg-surface-50 flex flex-col relative transition-colors duration-300">
+      <FloatingTransferWidget
+        uploads={uploads}
+        downloadProgress={downloadProgress}
+        onCancelUpload={onCancelUpload}
+        onCancelDownload={onCancelDownload}
+      />
       {/* Full-screen drag wash overlay */}
       {isDraggingPage && (
         <div 
@@ -703,108 +710,7 @@ export function Dashboard({
                 onImportShareHash={(hash) => onOpenReceiveShare?.(hash)}
               />
 
-              {/* Upload progress indicators */}
-              {activeUploads.length > 0 && (
-                <div className="space-y-3.5">
-                  {activeUploads.map((u) => (
-                    <div
-                      key={u.fileId}
-                      className="glass rounded-3xl p-5 space-y-3 border border-surface-300/40 dark:border-surface-300/10 animate-slide-up shadow-sm relative overflow-hidden"
-                    >
-                      {/* Loading reflection sheen */}
-                      <div className="absolute inset-0 shimmer pointer-events-none" />
 
-                      <div className="flex items-center justify-between text-sm relative z-10 select-none">
-                        <span className="text-surface-900 font-bold truncate mr-4">
-                          {u.fileName}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-surface-600 dark:text-surface-500 text-xs shrink-0 font-bold font-mono">
-                            {u.status === "uploading"
-                              ? `${Math.round((u.uploadedBytes / (u.totalBytes || 1)) * 100)}%`
-                              : u.status === "finalizing"
-                                ? "Finalizing..."
-                                : u.status === "error"
-                                  ? "Error"
-                                  : "Preparing..."}
-                          </span>
-                          {(u.status === "uploading" || u.status === "preparing") && onCancelUpload && (
-                            <button
-                              onClick={() => onCancelUpload(u.fileId)}
-                              className="p-1 hover:bg-surface-200 dark:hover:bg-surface-300/20 text-surface-650 dark:text-surface-600 hover:text-danger rounded-full transition-all cursor-pointer flex items-center justify-center"
-                              title="Cancel Upload"
-                            >
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      <ProgressBar
-                        value={
-                          u.totalBytes > 0
-                            ? (u.uploadedBytes / u.totalBytes) * 100
-                            : 0
-                        }
-                        color={u.status === "error" ? "brand" : "accent"}
-                      />
-                      <div className="flex justify-between text-[10px] text-surface-500 font-bold relative z-10 uppercase select-none tracking-wide">
-                        <span>
-                          {formatBytes(u.uploadedBytes)} /{" "}
-                          {formatBytes(u.totalBytes)}
-                          {u.speedBps ? ` - ${formatBytes(u.speedBps)}/s` : ""}
-                        </span>
-                        {u.error && (
-                          <span className="text-danger line-clamp-1 break-all max-w-xs normal-case" title={u.error}>
-                            {u.error}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Download progress */}
-              {downloadProgress && (
-                <div className="glass rounded-3xl p-5 space-y-3 border border-surface-300/40 dark:border-surface-300/10 animate-slide-up shadow-sm relative overflow-hidden">
-                  <div className="absolute inset-0 shimmer pointer-events-none" />
-                  
-                  <div className="flex items-center justify-between text-sm relative z-10 select-none">
-                    <span className="text-surface-900 font-bold truncate mr-4">
-                      ⬇️ {downloadProgress.name}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-surface-600 dark:text-surface-500 text-xs font-bold font-mono">
-                        {downloadProgress.progress}%
-                      </span>
-                      {onCancelDownload && (
-                        <button
-                          onClick={onCancelDownload}
-                          className="p-1 hover:bg-surface-200 dark:hover:bg-surface-300/20 text-surface-650 dark:text-surface-600 hover:text-danger rounded-full transition-all cursor-pointer flex items-center justify-center"
-                          title="Cancel Download"
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <ProgressBar
-                    value={downloadProgress.progress}
-                    color="success"
-                  />
-                  <div className="flex justify-between text-[10px] text-surface-500 font-bold relative z-10 uppercase select-none tracking-wide">
-                    <span>
-                      {formatBytes(downloadProgress.downloadedBytes)} /{" "}
-                      {formatBytes(downloadProgress.totalBytes)}
-                    </span>
-                    <span>{formatBytes(downloadProgress.speedBps)}/s</span>
-                  </div>
-                </div>
-              )}
 
               <div className="space-y-6">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 select-none">
@@ -1173,7 +1079,7 @@ export function Dashboard({
             mobileFileInputRef.current?.click();
           }
         }}
-        className="lg:hidden fixed bottom-6 right-6 z-40 w-14 h-14 rounded-2xl bg-brand-500 hover:bg-brand-650 text-white flex items-center justify-center shadow-lg active:scale-95 transition-all duration-150 cursor-pointer border border-brand-600/10 focus:outline-none"
+        className="lg:hidden fixed bottom-10 right-6 z-40 w-14 h-14 rounded-2xl bg-brand-500 hover:bg-brand-650 text-white flex items-center justify-center shadow-lg active:scale-95 transition-all duration-150 cursor-pointer border border-brand-600/10 focus:outline-none"
         title={activeFolderId === null ? "Create Folder" : "Upload Files"}
       >
         <svg

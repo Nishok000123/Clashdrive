@@ -1,132 +1,150 @@
-import { TelegramClient, Api } from "telegram";
-import { CHUNK_SIZE, UPLOAD_WORKERS } from "../config/telegram";
-import { buildManifest } from "./manifest";
+import { TelegramClient } from "@mtcute/web";
 import type { UploadProgress, DriveConfig } from "../types";
-import bigInt from "big-integer";
-import { getHelperClient, ensureConnected } from "./client";
-import {
-  generateApkThumbnail,
-  generateAudioThumbnail,
-  generatePdfThumbnail,
-  generateDocxThumbnail,
-  generateXlsxThumbnail,
-} from "./thumbnailGenerators";
+import { buildManifest } from "./manifest";
+import { getHelperClient } from "./client";
+import { ensureConnected } from "./client";
+import { generateAnyThumbnail } from "./thumbnailGenerators";
 
-export function generateVideoThumbnail(file: File | Blob): Promise<Blob> {
-  return new Promise<Blob>((resolve, reject) => {
+export async function generateVideoThumbnail(file: File | Blob): Promise<Blob | null> {
+  return new Promise((resolve) => {
     const video = document.createElement("video");
-    video.preload = "auto";
+    const url = URL.createObjectURL(file);
+    video.src = url;
     video.muted = true;
     video.playsInline = true;
 
-    const url = URL.createObjectURL(file);
-
-    const cleanUp = () => {
-      video.onseeked = null;
-      video.onloadedmetadata = null;
-      video.onerror = null;
+    const timeout = setTimeout(() => {
       URL.revokeObjectURL(url);
-      video.src = "";
-      video.load();
-    };
+      resolve(null);
+    }, 5000);
 
-    video.onerror = () => {
-      cleanUp();
-      reject(new Error("Failed to load video for thumbnail extraction"));
-    };
-
-    video.onloadedmetadata = () => {
-      video.currentTime = 1.0;
+    video.onloadeddata = () => {
+      video.currentTime = Math.min(1.0, video.duration / 2 || 0);
     };
 
     video.onseeked = () => {
-      try {
-        const canvas = document.createElement("canvas");
-        const width = 640;
-        const height = (video.videoHeight / video.videoWidth) * width || 480;
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          cleanUp();
-          reject(new Error("Failed to get 2D context"));
-          return;
+      clearTimeout(timeout);
+      const canvas = document.createElement("canvas");
+      const maxDim = 640;
+      let width = video.videoWidth || 640;
+      let height = video.videoHeight || 360;
+
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
         }
-        ctx.drawImage(video, 0, 0, width, height);
-        canvas.toBlob((blob) => {
-          cleanUp();
-          if (blob) {
-            resolve(blob);
-          } else {
-            reject(new Error("Failed to create blob from canvas"));
-          }
-        }, "image/jpeg", 0.7);
-      } catch (err) {
-        cleanUp();
-        reject(err);
       }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        resolve(null);
+        return;
+      }
+
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(video, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => {
+          URL.revokeObjectURL(url);
+          resolve(blob);
+        },
+        "image/jpeg",
+        0.9
+      );
     };
 
-    video.src = url;
+    video.onerror = () => {
+      clearTimeout(timeout);
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
   });
 }
 
-export function generateImageThumbnail(file: File | Blob): Promise<Blob> {
-  return new Promise<Blob>((resolve, reject) => {
+export async function generateImageThumbnail(file: File | Blob): Promise<Blob | null> {
+  return new Promise((resolve) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
+    img.src = url;
 
-    const cleanUp = () => {
-      img.onload = null;
-      img.onerror = null;
+    const timeout = setTimeout(() => {
       URL.revokeObjectURL(url);
+      resolve(null);
+    }, 5000);
+
+    img.onload = () => {
+      clearTimeout(timeout);
+      const canvas = document.createElement("canvas");
+      const maxDim = 640;
+      let width = img.width || 640;
+      let height = img.height || 640;
+
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        resolve(null);
+        return;
+      }
+
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => {
+          URL.revokeObjectURL(url);
+          resolve(blob);
+        },
+        "image/jpeg",
+        0.9
+      );
     };
 
     img.onerror = () => {
-      cleanUp();
-      reject(new Error("Failed to load image for resizing"));
+      clearTimeout(timeout);
+      URL.revokeObjectURL(url);
+      resolve(null);
     };
-
-    img.onload = () => {
-      try {
-        const canvas = document.createElement("canvas");
-        const maxDim = 1200;
-        let width = img.width;
-        let height = img.height;
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = (height / width) * maxDim;
-            width = maxDim;
-          } else {
-            width = (width / height) * maxDim;
-            height = maxDim;
-          }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          cleanUp();
-          reject(new Error("Failed to get canvas 2D context"));
-          return;
-        }
-        ctx.drawImage(img, 0, 0, width, height);
-        canvas.toBlob((blob) => {
-          cleanUp();
-          if (blob) {
-            resolve(blob);
-          } else {
-            reject(new Error("Failed to create blob from canvas"));
-          }
-        }, "image/jpeg", 0.85);
-      } catch (err) {
-        cleanUp();
-        reject(err);
-      }
-    };
-
-    img.src = url;
   });
+}
+
+async function generateAudioThumbnail(_file: File): Promise<Blob | null> {
+  return null;
+}
+
+async function generatePdfThumbnail(_file: File): Promise<Blob | null> {
+  return null;
+}
+
+async function generateDocxThumbnail(_file: File): Promise<Blob | null> {
+  return null;
+}
+
+async function generateXlsxThumbnail(_file: File): Promise<Blob | null> {
+  return null;
+}
+
+async function generateApkThumbnail(_file: File): Promise<Blob | null> {
+  return null;
 }
 
 async function runWithConcurrency<T>(
@@ -139,7 +157,7 @@ async function runWithConcurrency<T>(
   async function worker() {
     while (index < tasks.length) {
       if (signal?.aborted) {
-        throw new DOMException("Aborted", "AbortError");
+        throw new DOMException("Upload cancelled", "AbortError");
       }
       const i = index++;
       results[i] = await tasks[i]();
@@ -166,11 +184,8 @@ function getFloodWaitSeconds(err: unknown) {
   return parseInt(errorMessage.split("_").pop() || "", 10) || 30;
 }
 
-/**
- * Upload a single blob chunk as a document to the topic.
- */
 function getDynamicUploadConcurrency() {
-  return { segments: 3, workers: 20 };
+  return { segments: 2 };
 }
 
 /**
@@ -178,85 +193,75 @@ function getDynamicUploadConcurrency() {
  */
 async function uploadChunk(
   client: TelegramClient,
-  peer: Api.TypeInputPeer,
+  chatId: number,
   topicId: number,
   blob: Blob,
   partIndex: number,
   fileName: string,
-  workersLimit: number,
-  onChunkProgress?: (progress: number) => void,
+  onChunkProgress?: (uploaded: number, total: number) => void,
   signal?: AbortSignal
 ): Promise<number> {
-  const fileToUpload = new File(
-    [blob],
-    `${fileName}.part${String(partIndex).padStart(4, "0")}`
-  );
-
-  const idealWorkers = Math.min(workersLimit, Math.max(12, Math.ceil(blob.size / (1024 * 1024 * 1.5))));
-
-  const uploaded = await client.uploadFile({
-    file: fileToUpload,
-    workers: idealWorkers,
-    onProgress: (progress: number) => {
-      onChunkProgress?.(progress);
-    },
-  });
+  const chunkFileName = `${fileName}.part${String(partIndex).padStart(4, "0")}`;
+  const fileToUpload = new File([blob], chunkFileName);
 
   if (signal?.aborted) {
     throw new DOMException("Upload cancelled", "AbortError");
   }
 
-  const result = await client.invoke(
-    new Api.messages.SendMedia({
-      peer,
-      replyTo: new Api.InputReplyToMessage({ replyToMsgId: topicId }),
-      media: new Api.InputMediaUploadedDocument({
-        file: uploaded,
-        mimeType: "application/octet-stream",
-        attributes: [
-          new Api.DocumentAttributeFilename({
-            fileName: `${fileName}.part${String(partIndex).padStart(4, "0")}`,
-          }),
-        ],
-      }),
-      message: "",
-      randomId: bigInt(Math.floor(Math.random() * 0xffffffffffff)),
-    })
+  const uploadedFile = await client.uploadFile({
+    file: fileToUpload,
+    fileName: chunkFileName,
+    fileSize: fileToUpload.size,
+    partSize: 512,
+    requestsPerConnection: 6,
+    progressCallback: (uploaded, total) => {
+      onChunkProgress?.(uploaded, total);
+    },
+    abortSignal: signal,
+  });
+
+  const msg = await client.sendMedia(
+    chatId,
+    {
+      type: "document",
+      file: uploadedFile,
+      fileName: chunkFileName,
+      fileMime: "application/octet-stream",
+    },
+    {
+      replyTo: topicId,
+    }
   );
 
-  // Extract the message ID from the returned Updates
-  const updates = result as Api.Updates;
-  for (const upd of updates.updates) {
-    if (upd.className === "UpdateNewChannelMessage") {
-      return (upd as Api.UpdateNewChannelMessage).message.id;
-    }
+  if (signal?.aborted) {
+    throw new DOMException("Upload cancelled", "AbortError");
   }
-  throw new Error("Could not extract message ID from upload response");
+
+  return msg.id;
 }
 
 /**
  * Calculate dynamic upload chunk size based on total file size:
- * - Up to 1 GB: 50 MB
- * - 1 GB to 2 GB: 100 MB
- * - 2 GB to 3 GB: 150 MB
- * - Increases by 50 MB for each additional 1 GB tier
+ * - Under 1 GB: 50 MB
+ * - 1 GB to < 3 GB: 100 MB
+ * - 3 GB to < 5 GB: 150 MB
+ * - Increases by 50 MB for every 2 GB step above 1 GB
  * - Maximum chunk size cap: 500 MB
  */
 export function getUploadChunkSize(fileSize: number): number {
   const MB = 1024 * 1024;
   const GB = 1024 * 1024 * 1024;
 
-  const gbCount = Math.floor(fileSize / GB);
-  const sizeInMB = Math.min(500, (gbCount + 1) * 50);
+  if (fileSize < 1 * GB) {
+    return 50 * MB;
+  }
+  const tier = Math.floor((fileSize - 1 * GB) / (2 * GB));
+  const sizeInMB = Math.min(500, 100 + tier * 50);
   return sizeInMB * MB;
 }
 
 /**
  * Orchestrate a full segmented file upload.
- *
- * 1. Slice the file into dynamic chunk size pieces (50MB - 500MB depending on file size)
- * 2. Upload each chunk sequentially/concurrently
- * 3. Send the manifest JSON as a final message
  */
 export async function uploadFile(
   client: TelegramClient,
@@ -270,43 +275,34 @@ export async function uploadFile(
   const uploadChunkSize = getUploadChunkSize(file.size);
   const totalChunks = Math.ceil(file.size / uploadChunkSize);
   const finalFileId = fileId || `${file.name}-${Date.now()}`;
+  const chatIdNumber = Number(config.chatId);
 
-  const peer = new Api.InputPeerChannel({ channelId: bigInt(config.chatId), accessHash: bigInt(config.accessHash) });
-
-  // Shared per-chunk byte progress tracker (written by callbacks, read by poller)
   const chunkProgress = new Float64Array(totalChunks);
   let currentStatus: UploadProgress["status"] = "preparing";
   let currentError: string | undefined;
   const startedAt = performance.now();
-  
-  // Track uploaded message IDs for cleanup on cancellation
+
   const uploadedMsgIds: number[] = [];
 
   const emitProgress = () => {
     const totalUploadedBytes = chunkProgress.reduce((a, b) => a + b, 0);
     const elapsedSeconds = Math.max((performance.now() - startedAt) / 1000, 0.001);
-    const uploadedChunks = Array.from(chunkProgress).filter((bytes, index) => {
-      const currentChunkSize = Math.min(uploadChunkSize, file.size - index * uploadChunkSize);
-      return currentChunkSize > 0 && bytes >= currentChunkSize;
-    }).length;
+    const speedBps = totalUploadedBytes / elapsedSeconds;
+
     onProgress?.({
       fileId: finalFileId,
       fileName: file.name,
       totalChunks,
-      uploadedChunks,
+      uploadedChunks: chunkProgress.filter((p, idx) => p >= Math.min(uploadChunkSize, file.size - idx * uploadChunkSize)).length,
       totalBytes: file.size,
-      uploadedBytes: Math.min(totalUploadedBytes, file.size),
-      speedBps: Math.min(totalUploadedBytes, file.size) / elapsedSeconds,
+      uploadedBytes: totalUploadedBytes,
       status: currentStatus,
       error: currentError,
+      speedBps,
     });
   };
 
-  // Start a 100ms polling interval so the UI always gets smooth updates
-  // even when GramJS batches its internal progress callbacks
   const progressInterval = setInterval(emitProgress, 100);
-
-  const { segments, workers } = getDynamicUploadConcurrency();
 
   let abortPromise: Promise<never> | null = null;
   let abortHandler: (() => void) | null = null;
@@ -321,76 +317,39 @@ export async function uploadFile(
     if (signal?.aborted) {
       throw new DOMException("Upload cancelled", "AbortError");
     }
+
     emitProgress();
+    const { segments } = getDynamicUploadConcurrency();
 
-    let thumbMsgId: number | undefined;
+    let thumbMsgId: number | undefined = undefined;
 
-    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-    const isVideo = ["mp4","mkv","avi","mov","webm","flv","3gp","ts","mts","m2ts"].includes(ext);
-    const isImage = ["png","jpg","jpeg","gif","webp","svg","bmp","avif","heic","tiff"].includes(ext);
-    const isApk = ["apk", "apkx", "apks", "xapk", "apkm"].includes(ext);
-    const isAudio = ["mp3", "m4a", "flac", "aac", "ogg", "wav", "opus"].includes(ext);
-    const isPdf = ext === "pdf";
-    const isDocx = ext === "docx";
-    const isXlsx = ["xlsx", "xls"].includes(ext);
-
-    if (isVideo || (isImage && file.size > 3 * 1024 * 1024) || isApk || isAudio || isPdf || isDocx || isXlsx) {
-      try {
-        currentStatus = "preparing";
-        emitProgress();
-
-        let thumbBlob: Blob;
-        if (isVideo) {
-          thumbBlob = await generateVideoThumbnail(file);
-        } else if (isApk) {
-          thumbBlob = await generateApkThumbnail(file);
-        } else if (isAudio) {
-          thumbBlob = await generateAudioThumbnail(file);
-        } else if (isPdf) {
-          thumbBlob = await generatePdfThumbnail(file);
-        } else if (isDocx) {
-          thumbBlob = await generateDocxThumbnail(file);
-        } else if (isXlsx) {
-          thumbBlob = await generateXlsxThumbnail(file);
-        } else {
-          thumbBlob = await generateImageThumbnail(file);
-        }
-
+    try {
+      const thumbBlob = await generateAnyThumbnail(file, file.name);
+      if (thumbBlob) {
         const thumbFile = new File([thumbBlob], `${file.name}.thumb.jpg`);
         const uploadedThumb = await client.uploadFile({
           file: thumbFile,
-          workers: 4,
+          fileName: thumbFile.name,
+          fileSize: thumbFile.size,
         });
-
-        const thumbResult = await client.invoke(
-          new Api.messages.SendMedia({
-            peer,
-            replyTo: new Api.InputReplyToMessage({ replyToMsgId: topicId }),
-            media: new Api.InputMediaUploadedDocument({
-              file: uploadedThumb,
-              mimeType: "image/jpeg",
-              attributes: [
-                new Api.DocumentAttributeFilename({
-                  fileName: thumbFile.name,
-                }),
-              ],
-            }),
-            message: "",
-            randomId: bigInt(Math.floor(Math.random() * 0xffffffffffff)),
-          })
+        const thumbMsg = await client.sendMedia(
+          chatIdNumber,
+          {
+            type: "document",
+            file: uploadedThumb,
+            fileName: thumbFile.name,
+            fileMime: "image/jpeg",
+          },
+          {
+            replyTo: topicId,
+          }
         );
 
-        const thumbUpdates = thumbResult as Api.Updates;
-        for (const upd of thumbUpdates.updates) {
-          if (upd.className === "UpdateNewChannelMessage") {
-            thumbMsgId = (upd as Api.UpdateNewChannelMessage).message.id;
-            uploadedMsgIds.push(thumbMsgId);
-            break;
-          }
-        }
-      } catch (thumbErr) {
-        console.warn("Failed to generate or upload thumbnail, proceeding without it:", thumbErr);
+        thumbMsgId = thumbMsg.id;
+        uploadedMsgIds.push(thumbMsgId);
       }
+    } catch (thumbErr) {
+      console.warn("Failed to generate or upload thumbnail, proceeding without it:", thumbErr);
     }
 
     const tasks = Array.from({ length: totalChunks }).map((_, i) => async () => {
@@ -409,32 +368,24 @@ export async function uploadFile(
         try {
           currentStatus = "uploading";
           await ensureConnected();
-          const activeClient = await getHelperClient(i % 3);
+          const activeClient = client;
           const msgId = await uploadChunk(
             activeClient,
-            peer,
+            chatIdNumber,
             topicId,
             blob,
             i,
             file.name,
-            workers,
-            (progress) => {
-              chunkProgress[i] = progress * blob.size;
+            (uploaded, _total) => {
+              chunkProgress[i] = Math.max(chunkProgress[i], uploaded);
             },
             signal
           );
           if (signal?.aborted) {
-            activeClient.invoke(
-              new Api.channels.DeleteMessages({
-                channel: peer,
-                id: [msgId],
-              })
-            ).catch(() => {});
+            activeClient.deleteMessagesById(chatIdNumber, [msgId]).catch(() => {});
             throw new DOMException("Upload cancelled", "AbortError");
           }
-          // Register message ID for potential cleanup
           uploadedMsgIds.push(msgId);
-          // Mark chunk fully done
           chunkProgress[i] = blob.size;
           return { index: i, msgId };
         } catch (err: unknown) {
@@ -487,25 +438,9 @@ export async function uploadFile(
 
     const manifestJson = buildManifest(file.name, file.size, chunkMsgIds, thumbMsgId, uploadChunkSize);
 
-    const sentResult = await client.invoke(
-      new Api.messages.SendMessage({
-        peer,
-        replyTo: new Api.InputReplyToMessage({ replyToMsgId: topicId }),
-        message: manifestJson,
-        randomId: bigInt(Math.floor(Math.random() * 0xffffffffffff)),
-      })
-    );
-
-    let manifestMsgId: number | undefined;
-    const sentUpdates = sentResult as Api.Updates;
-    if (sentUpdates && sentUpdates.updates) {
-      for (const upd of sentUpdates.updates) {
-        if (upd.className === "UpdateNewChannelMessage") {
-          manifestMsgId = (upd as Api.UpdateNewChannelMessage).message.id;
-          break;
-        }
-      }
-    }
+    await client.sendText(chatIdNumber, manifestJson, {
+      replyTo: topicId,
+    });
 
     currentStatus = "done";
     emitProgress();
@@ -520,14 +455,8 @@ export async function uploadFile(
       emitProgress();
     }
 
-    // Clean up uploaded orphaned chunks from Telegram
     if (uploadedMsgIds.length > 0) {
-      client.invoke(
-        new Api.channels.DeleteMessages({
-          channel: peer,
-          id: uploadedMsgIds,
-        })
-      ).catch((deleteErr) => {
+      client.deleteMessagesById(chatIdNumber, uploadedMsgIds).catch((deleteErr) => {
         console.warn("Failed to delete orphaned chunks after cancellation:", deleteErr);
       });
     }
