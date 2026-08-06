@@ -119,22 +119,16 @@ export async function scanForDriveGroup(
   const titleCandidates: any[] = [];
 
   for (const dialog of dialogs) {
-    const chat = dialog.chat;
-    if (!chat) continue;
+    // @mtcute Dialog has .peer, NOT .chat
+    const peer = (dialog as any).peer || (dialog as any).chat;
+    if (!peer) continue;
 
-    // Skip private 1-on-1 user chats
-    if (
-      chat.chatType === "user" ||
-      chat.type === "user" ||
-      (chat as any)._ === "user" ||
-      (chat as any)._ === "peerUser"
-    ) {
-      continue;
-    }
+    // Skip private 1-on-1 user chats (User.type === "user", Chat.type === "chat")
+    if (peer.type === "user") continue;
 
-    const titleLower = (chat.title || "").toLowerCase();
+    const titleLower = (peer.title || "").toLowerCase();
     if (TITLE_KEYWORDS.some((kw) => titleLower.includes(kw))) {
-      titleCandidates.push(chat);
+      titleCandidates.push(peer);
     }
   }
 
@@ -146,6 +140,7 @@ export async function scanForDriveGroup(
     bareId: number;
     hasSignature: boolean;
     manifestCount: number;
+    titleOnly: boolean;
   }[] = [];
 
   for (const chat of titleCandidates) {
@@ -153,21 +148,23 @@ export async function scanForDriveGroup(
       // 4a. Check description for signature
       let about = "";
       try {
-        const full = await client.getFullChat(chat);
+        // Pass marked ID or the peer directly
+        const markedIdNum = Number(getMarkedChannelId(chat.id));
+        const full = await client.getFullChat(markedIdNum);
         about = full.bio || "";
       } catch {
         try {
           const bareId = getBareChannelId(chat.id);
-          const accessHash = (chat as any).raw?.accessHash || chat.accessHash || Long.ZERO;
+          const ah = chat.raw?.accessHash || chat.inputPeer?.accessHash || Long.ZERO;
           const channelInput = {
             _: "inputChannel" as const,
             channelId: bareId,
             accessHash:
-              typeof accessHash === "string"
-                ? Long.fromString(accessHash)
-                : typeof accessHash === "number"
-                ? Long.fromNumber(accessHash)
-                : accessHash || Long.ZERO,
+              typeof ah === "string"
+                ? Long.fromString(ah)
+                : typeof ah === "number"
+                ? Long.fromNumber(ah)
+                : ah || Long.ZERO,
           };
           const full: any = await client.call({
             _: "channels.getFullChannel",
@@ -188,21 +185,21 @@ export async function scanForDriveGroup(
       try {
         const markedIdNum = Number(getMarkedChannelId(chat.id));
         const bareId = getBareChannelId(chat.id);
-        const accessHash = (chat as any).raw?.accessHash || chat.accessHash || Long.ZERO;
+        const ah = chat.raw?.accessHash || chat.inputPeer?.accessHash || Long.ZERO;
         const peerInput = {
           _: "inputPeerChannel" as const,
           channelId: bareId,
           accessHash:
-            typeof accessHash === "string"
-              ? Long.fromString(accessHash)
-              : typeof accessHash === "number"
-              ? Long.fromNumber(accessHash)
-              : accessHash || Long.ZERO,
+            typeof ah === "string"
+              ? Long.fromString(ah)
+              : typeof ah === "number"
+              ? Long.fromNumber(ah)
+              : ah || Long.ZERO,
         };
 
         const topics = await client.getForumTopics(markedIdNum).catch(() => []);
         for (const topic of topics) {
-          if (manifestCount > 0) break; // found manifests, no need to check more topics
+          if (manifestCount > 0) break;
           try {
             const repliesRes: any = await client.call({
               _: "messages.getReplies",
@@ -233,7 +230,8 @@ export async function scanForDriveGroup(
       // Check general history
       if (manifestCount === 0) {
         try {
-          const history = await client.getHistory(chat, { limit: 30 });
+          const markedIdNum = Number(getMarkedChannelId(chat.id));
+          const history = await client.getHistory(markedIdNum, { limit: 30 });
           for (const msg of history) {
             if (msg && msg.text && (msg.text.includes('"segmented_file"') || parseManifest(msg.text) !== null)) {
               manifestCount++;
@@ -244,14 +242,12 @@ export async function scanForDriveGroup(
         }
       }
 
-      // Only add if we found something meaningful
+      // Add candidate: with signature/manifests = high priority, title-only = low priority fallback
       if (hasSignature || manifestCount > 0) {
         const markedId = getMarkedChannelId(chat.id);
         const bareId = getBareChannelId(chat.id);
-        const accessHashStr = (chat as any).raw?.accessHash
-          ? (chat as any).raw.accessHash.toString()
-          : chat.accessHash
-          ? chat.accessHash.toString()
+        const accessHashStr = chat.raw?.accessHash
+          ? chat.raw.accessHash.toString()
           : "0";
 
         const config: DriveConfig = {
@@ -260,8 +256,24 @@ export async function scanForDriveGroup(
           accessHash: accessHashStr,
         };
 
-        scored.push({ config, bareId, hasSignature, manifestCount });
+        scored.push({ config, bareId, hasSignature, manifestCount, titleOnly: false });
         console.log(`[radar] Candidate: "${chat.title}" sig=${hasSignature} manifests=${manifestCount} bareId=${bareId}`);
+      } else {
+        // Title-only fallback: still add it but with lowest priority
+        const markedId = getMarkedChannelId(chat.id);
+        const bareId = getBareChannelId(chat.id);
+        const accessHashStr = chat.raw?.accessHash
+          ? chat.raw.accessHash.toString()
+          : "0";
+
+        const config: DriveConfig = {
+          chatId: markedId,
+          chatTitle: chat.title || "Clash Drive",
+          accessHash: accessHashStr,
+        };
+
+        scored.push({ config, bareId, hasSignature: false, manifestCount: 0, titleOnly: true });
+        console.log(`[radar] Title-only fallback: "${chat.title}" bareId=${bareId}`);
       }
     } catch (err) {
       console.warn("[radar] Error checking candidate:", chat.title, err);
@@ -271,6 +283,8 @@ export async function scanForDriveGroup(
 
   if (scored.length > 0) {
     scored.sort((a, b) => {
+      // Verified candidates first, title-only last
+      if (a.titleOnly !== b.titleOnly) return a.titleOnly ? 1 : -1;
       if (b.manifestCount !== a.manifestCount) return b.manifestCount - a.manifestCount;
       if (b.hasSignature !== a.hasSignature) return (b.hasSignature ? 1 : 0) - (a.hasSignature ? 1 : 0);
       return a.bareId - b.bareId;
