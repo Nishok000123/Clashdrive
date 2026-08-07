@@ -18,6 +18,33 @@ function getMarkedChannelId(idInput: string | number): string {
   return `-100${bare}`;
 }
 
+async function stampDriveSignature(
+  client: TelegramClient,
+  chatId: string | number,
+  accessHashStr: string,
+  existingBio: string = ""
+): Promise<void> {
+  try {
+    const bareId = getBareChannelId(chatId);
+    const peerInput = {
+      _: "inputPeerChannel" as const,
+      channelId: bareId,
+      accessHash: Long.fromString(accessHashStr || "0"),
+    };
+    const newAbout = existingBio && existingBio.trim()
+      ? (existingBio.includes(DRIVE_SIGNATURE) ? existingBio : `${existingBio}\n${DRIVE_SIGNATURE}`)
+      : `Personal cloud storage powered by Telegram.\n${DRIVE_SIGNATURE}`;
+
+    await client.call({
+      _: "messages.editChatAbout",
+      peer: peerInput,
+      about: newAbout,
+    });
+  } catch (err) {
+    console.warn("[radar] Failed to stamp drive signature:", err);
+  }
+}
+
 async function verifyDriveGroup(
   client: TelegramClient,
   config: DriveConfig
@@ -28,7 +55,11 @@ async function verifyDriveGroup(
 
   try {
     const fullChat = await client.getFullChat(markedIdNum);
-    if (fullChat && fullChat.bio && fullChat.bio.includes(DRIVE_SIGNATURE)) {
+    if (fullChat) {
+      const bio = fullChat.bio || "";
+      if (!bio.includes(DRIVE_SIGNATURE)) {
+        await stampDriveSignature(client, config.chatId, config.accessHash, bio);
+      }
       return { ...config, chatId: markedIdStr };
     }
   } catch {
@@ -46,8 +77,11 @@ async function verifyDriveGroup(
       _: "channels.getFullChannel",
       channel: channelInput,
     });
-    const about = full.fullChat?.about ?? "";
-    if (about.includes(DRIVE_SIGNATURE)) {
+    if (full && full.fullChat) {
+      const about = full.fullChat.about ?? "";
+      if (!about.includes(DRIVE_SIGNATURE)) {
+        await stampDriveSignature(client, config.chatId, config.accessHash, about);
+      }
       return { ...config, chatId: markedIdStr };
     }
   } catch (err) {
@@ -290,8 +324,12 @@ export async function scanForDriveGroup(
       return a.bareId - b.bareId;
     });
 
-    const best = scored[0].config;
+    const bestCandidate = scored[0];
+    const best = bestCandidate.config;
     console.log(`[radar] Selected drive: "${best.chatTitle}" (${best.chatId})`);
+    if (!bestCandidate.hasSignature) {
+      await stampDriveSignature(client, best.chatId, best.accessHash);
+    }
     localStorage.setItem(userDriveKey, JSON.stringify(best));
     return best;
   }
@@ -316,12 +354,49 @@ export async function createDriveGroup(
 
   const chats = result.chats || [];
   const channel = chats[0];
+  const accessHashStr = channel.accessHash ? channel.accessHash.toString() : "0";
 
   const markedId = getMarkedChannelId(channel.id);
+  const bareId = getBareChannelId(channel.id);
+
+  const peerInput = {
+    _: "inputPeerChannel" as const,
+    channelId: bareId,
+    accessHash: Long.fromString(accessHashStr),
+  };
+
+  // Explicitly set description and toggle forum to guarantee setup on Telegram servers
+  try {
+    await client.call({
+      _: "messages.editChatAbout",
+      peer: peerInput,
+      about: `Personal cloud storage powered by Telegram.\n${DRIVE_SIGNATURE}`,
+    });
+  } catch (e) {
+    console.warn("Failed to set chat description in createDriveGroup:", e);
+  }
+
+  const channelInput = {
+    _: "inputChannel" as const,
+    channelId: bareId,
+    accessHash: Long.fromString(accessHashStr),
+  };
+
+  try {
+    await (client.call as any)({
+      _: "channels.toggleForum",
+      channel: channelInput,
+      enabled: true,
+      tabs: false,
+    });
+  } catch (e) {
+    console.warn("Failed to toggle forum in createDriveGroup:", e);
+  }
+
   const config: DriveConfig = {
     chatId: markedId,
     chatTitle: channel.title,
-    accessHash: channel.accessHash ? channel.accessHash.toString() : "0",
+    accessHash: accessHashStr,
   };
 
   let userId = "default";
