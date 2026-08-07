@@ -57,7 +57,7 @@ function getMessageDocumentInfo(message: any): {
     if (m.type === "document" || m.type === "video" || m.type === "audio" || m.type === "sticker") {
       return {
         mimeType: m.mimeType || "application/octet-stream",
-        fileName: m.fileName || `${m.type}_${message.id}`,
+        fileName: m.fileName || `${m.type || "file"}_${message.id}`,
         fileSize: m.fileSize || m.size || 0,
       };
     }
@@ -73,25 +73,44 @@ function getMessageDocumentInfo(message: any): {
   const media = message.media || message.raw?.media;
   if (!media) return {};
 
-  if (media._ === "messageMediaDocument" && media.document) {
+  if ((media._ === "messageMediaDocument" || media._ === "messageMediaDocumentEmpty") && media.document) {
     const doc = media.document;
-    if (doc._ === "document") {
+    if (doc && (doc._ === "document" || doc.id)) {
       const fileNameAttr = doc.attributes?.find(
-        (attr: any) => attr._ === "documentAttributeFilename"
+        (attr: any) => attr._ === "documentAttributeFilename" || attr.fileName
       );
+      const mimeType = doc.mimeType || "application/octet-stream";
+      let fallbackExt = "";
+      if (mimeType.startsWith("image/")) fallbackExt = ".jpg";
+      else if (mimeType.startsWith("video/")) fallbackExt = ".mp4";
+      else if (mimeType.startsWith("audio/")) fallbackExt = ".mp3";
+      else if (mimeType === "application/pdf") fallbackExt = ".pdf";
+      else if (mimeType === "application/zip") fallbackExt = ".zip";
+
+      const finalName = fileNameAttr?.fileName || (doc.fileName ? doc.fileName : `File_${message.id}${fallbackExt}`);
       return {
-        mimeType: doc.mimeType || "application/octet-stream",
-        fileName: fileNameAttr?.fileName || `File_${message.id}`,
+        mimeType,
+        fileName: finalName,
         fileSize: doc.size || 0,
       };
     }
   }
 
-  if (media._ === "messageMediaPhoto" && media.photo) {
+  if ((media._ === "messageMediaPhoto" || media.photo) && media.photo) {
+    const photo = media.photo;
+    const sizes = photo.sizes || photo.size || [];
+    let largestSize = 0;
+    if (Array.isArray(sizes)) {
+      for (const s of sizes) {
+        if (s && typeof s.size === "number" && s.size > largestSize) {
+          largestSize = s.size;
+        }
+      }
+    }
     return {
       mimeType: "image/jpeg",
       fileName: `Photo_${message.id}.jpg`,
-      fileSize: 0,
+      fileSize: largestSize || 0,
     };
   }
 
@@ -992,45 +1011,123 @@ export async function listFilesInTopic(
     let offsetId = 0;
     const limit = 100;
 
-    while (true) {
-      const result: any = await client.call({
-        _: "messages.getReplies",
-        peer: channelInput,
-        msgId: topicId,
-        offsetId,
-        offsetDate: 0,
-        addOffset: 0,
-        limit,
-        maxId: 0,
-        minId: 0,
-        hash: Long.ZERO,
-      });
+    const isGeneralTopic = topicId === 1 || topicId <= 0;
 
-      const messages = result.messages ?? [];
-      if (messages.length === 0) break;
-
-      let hasNewMessage = false;
-      let minId = offsetId || Infinity;
-
-      for (const m of messages) {
-        if (m._ === "message" || m.id) {
-          if (!messageById.has(m.id)) {
-            messageById.set(m.id, m);
+    if (!isGeneralTopic) {
+      while (true) {
+        let result: any = null;
+        let attempts = 0;
+        while (attempts < 3) {
+          try {
+            result = await client.call({
+              _: "messages.getReplies",
+              peer: channelInput,
+              msgId: topicId,
+              offsetId,
+              offsetDate: 0,
+              addOffset: 0,
+              limit,
+              maxId: 0,
+              minId: 0,
+              hash: Long.ZERO,
+            });
+            break;
+          } catch (e: any) {
+            const wait = getFloodWaitSeconds(e);
+            if (wait !== null) {
+              console.warn(`[listFilesInTopic] FloodWait: sleeping ${wait}s...`);
+              await new Promise((r) => setTimeout(r, wait * 1000));
+              attempts++;
+              continue;
+            }
+            console.warn(`[listFilesInTopic] getReplies failed for topic ${topicId}:`, e);
+            break;
           }
-          if (offsetId === 0 || m.id < offsetId) {
-            hasNewMessage = true;
-            if (m.id < minId) {
-              minId = m.id;
+        }
+
+        if (!result || !result.messages) break;
+        const messages = result.messages ?? [];
+        if (messages.length === 0) break;
+
+        let addedCount = 0;
+        let lowestId = Infinity;
+
+        for (const m of messages) {
+          if (m && m.id) {
+            if (!messageById.has(m.id)) {
+              messageById.set(m.id, m);
+              addedCount++;
+            }
+            if (m.id < lowestId) {
+              lowestId = m.id;
             }
           }
         }
-      }
 
-      if (!hasNewMessage || minId === Infinity || minId === offsetId) {
-        break;
-      }
+        if (lowestId === Infinity || lowestId <= 1) {
+          break;
+        }
 
-      offsetId = minId;
+        if (offsetId > 0 && lowestId >= offsetId) {
+          offsetId = offsetId - 1;
+        } else {
+          offsetId = lowestId;
+        }
+
+        if (messages.length < limit && addedCount === 0) {
+          break;
+        }
+      }
+    }
+
+    // Fallback: If General Topic or if no thread reply messages were returned, query main history via getHistory
+    if (messageById.size === 0) {
+      offsetId = 0;
+      while (true) {
+        let historyMsgs: any[] = [];
+        let attempts = 0;
+        while (attempts < 3) {
+          try {
+            const res = await (client.getHistory as any)(chatIdNumber, { offset: offsetId, limit });
+            historyMsgs = res || [];
+            break;
+          } catch (e: any) {
+            const wait = getFloodWaitSeconds(e);
+            if (wait !== null) {
+              await new Promise((r) => setTimeout(r, wait * 1000));
+              attempts++;
+              continue;
+            }
+            break;
+          }
+        }
+
+        if (historyMsgs.length === 0) break;
+        let addedCount = 0;
+        let lowestId = Infinity;
+
+        for (const m of historyMsgs) {
+          if (m && m.id) {
+            if (!messageById.has(m.id)) {
+              messageById.set(m.id, m);
+              addedCount++;
+            }
+            if (m.id < lowestId) {
+              lowestId = m.id;
+            }
+          }
+        }
+
+        if (lowestId === Infinity || lowestId <= 1) break;
+
+        if (offsetId > 0 && lowestId >= offsetId) {
+          offsetId = offsetId - 1;
+        } else {
+          offsetId = lowestId;
+        }
+
+        if (historyMsgs.length < limit && addedCount === 0) break;
+      }
     }
 
     const manifestItems: { msg: any; manifest: ChunkManifest }[] = [];
@@ -1060,10 +1157,15 @@ export async function listFilesInTopic(
 
     if (missingChunkIds.length > 0) {
       try {
-        const chunkMessages: any = await client.getMessages(getPeerInput(config), missingChunkIds);
-        for (const chunkMsg of chunkMessages) {
-          if (chunkMsg && chunkMsg.id) {
-            messageById.set(chunkMsg.id, chunkMsg);
+        const peerInput = getPeerInput(config);
+        const batchSize = 100;
+        for (let i = 0; i < missingChunkIds.length; i += batchSize) {
+          const slice = missingChunkIds.slice(i, i + batchSize);
+          const chunkMessages: any = await client.getMessages(peerInput, slice);
+          for (const chunkMsg of chunkMessages) {
+            if (chunkMsg && chunkMsg.id) {
+              messageById.set(chunkMsg.id, chunkMsg);
+            }
           }
         }
       } catch (err) {
@@ -1103,7 +1205,7 @@ export async function listFilesInTopic(
         continue;
       }
       const docInfo = getMessageDocumentInfo(m);
-      if (docInfo.fileName && !isChunkOrThumbFileName(docInfo.fileName)) {
+      if (docInfo.fileName) {
         const syntheticManifest: ChunkManifest = {
           type: "segmented_file",
           fileName: docInfo.fileName,

@@ -37,22 +37,71 @@ export async function getTopics(
       channelId: bareId,
       accessHash: Long.fromString(config.accessHash || "0"),
     };
-    const raw: any = await client.call({
-      _: "messages.getForumTopics",
-      peer: channelInput,
-      offsetDate: 0,
-      offsetId: 0,
-      offsetTopic: 0,
-      limit: 100,
-    });
-    if (raw && raw.topics) {
-      return raw.topics.map((t: any) => ({
-        id: t.id,
-        title: t.title,
-        iconColor: t.icon_color ?? 0x6c63ff,
-        date: t.date || Math.floor(Date.now() / 1000),
-        messageCount: 0,
-      }));
+
+    const allTopics: TopicFolder[] = [];
+    let offsetTopic = 0;
+    let offsetDate = 0;
+    let offsetId = 0;
+
+    while (true) {
+      let raw: any = null;
+      let attempts = 0;
+      while (attempts < 3) {
+        try {
+          raw = await client.call({
+            _: "messages.getForumTopics",
+            peer: channelInput,
+            offsetDate,
+            offsetId,
+            offsetTopic,
+            limit: 100,
+          });
+          break;
+        } catch (e: any) {
+          if (typeof e === "object" && e && "errorMessage" in e && typeof e.errorMessage === "string" && e.errorMessage.startsWith("FLOOD_WAIT_")) {
+            const wait = parseInt(e.errorMessage.split("_").pop() || "30", 10) || 30;
+            console.warn(`[getTopics] FloodWait: sleeping ${wait}s...`);
+            await new Promise((r) => setTimeout(r, wait * 1000));
+            attempts++;
+            continue;
+          }
+          console.warn("[getTopics] Raw RPC failed:", e);
+          break;
+        }
+      }
+
+      const fetched = raw?.topics ?? [];
+      if (fetched.length === 0) break;
+
+      let added = 0;
+      for (const t of fetched) {
+        if (!allTopics.some((existing) => existing.id === t.id)) {
+          allTopics.push({
+            id: t.id,
+            title: t.title,
+            iconColor: t.icon_color ?? 0x6c63ff,
+            date: t.date || Math.floor(Date.now() / 1000),
+            messageCount: 0,
+          });
+          added++;
+        }
+      }
+
+      if (fetched.length < 100 || added === 0) break;
+
+      const last = fetched[fetched.length - 1];
+      const nextOffsetTopic = last.id;
+      if (nextOffsetTopic <= offsetTopic) {
+        offsetTopic = offsetTopic + 1;
+      } else {
+        offsetTopic = nextOffsetTopic;
+      }
+      offsetDate = last.date || 0;
+      offsetId = last.top_message || last.id || 0;
+    }
+
+    if (allTopics.length > 0) {
+      return allTopics;
     }
   } catch (rawErr) {
     console.error("Failed to load topics via raw RPC:", rawErr);

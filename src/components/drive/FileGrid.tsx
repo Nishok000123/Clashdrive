@@ -4,6 +4,7 @@ import type { DriveFile, DriveConfig } from "../../types";
 import { formatBytes } from "../../lib/manifest";
 import { FileIcon } from "./FileIcon";
 import { FileCardThumbnail } from "./FileCardThumbnail";
+import { Pagination } from "../ui/Pagination";
 
 interface FileGridProps {
   client?: TelegramClient | null;
@@ -44,6 +45,13 @@ export function FileGrid({
   onOpenDetails,
   gridBoxSize = "large",
 }: FileGridProps) {
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(24);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [files]);
+
   const [contextMenu, setContextMenu] = useState<{
     visible: boolean;
     x: number;
@@ -145,8 +153,16 @@ export function FileGrid({
     );
   }
 
+  const totalItems = files.length;
+  const isAll = pageSize === 0 || pageSize >= totalItems;
+  const totalPages = isAll ? 1 : Math.ceil(totalItems / pageSize);
+
+  const paginatedFiles = isAll
+    ? files
+    : files.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   const groups = new Map<string, DriveFile[]>();
-  for (const f of files) {
+  for (const f of paginatedFiles) {
     const d = new Date(f.date * 1000);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     if (!groups.has(key)) groups.set(key, []);
@@ -198,7 +214,7 @@ export function FileGrid({
       </div>
 
       {/* Grid Canvas */}
-      <div className="space-y-8 pb-12">
+      <div className="space-y-8 pb-6">
         {sortedKeys.map((key) => {
           const sectionFiles = groups.get(key)!;
           const d = new Date(parseInt(key.split("-")[0]), parseInt(key.split("-")[1]) - 1);
@@ -253,12 +269,12 @@ export function FileGrid({
                   return (
                     <div
                       key={file.id}
-                      className={`relative bg-md-surface-container-lowest ${cardRoundClass} overflow-hidden cursor-pointer border transition-all duration-300 hover:-translate-y-0.5 select-none group flex flex-col ${
+                      className={`group relative bg-surface-100/80 dark:bg-surface-200/20 backdrop-blur-xl ${cardRoundClass} ${cardPadding} flex flex-col justify-between transition-all duration-300 ease-out border select-none cursor-pointer hover:shadow-xl hover:shadow-brand-500/5 hover:-translate-y-1 ${
                         isSelected
-                          ? "border-md-primary bg-md-primary-container/15"
-                          : "border-md-outline-variant/30 hover:border-md-primary/30"
+                          ? "border-brand-500 ring-2 ring-brand-500/30 bg-brand-500/5"
+                          : "border-surface-300/40 dark:border-surface-300/10 hover:border-brand-500/40"
                       }`}
-                      style={{ animationDelay: `${Math.min((startIdx + idx) * 15, 250)}ms`, boxShadow: 'var(--md-elevation-1)' }}
+                      style={{ animationDelay: `${Math.min((startIdx + idx) * 15, 250)}ms` }}
                       onClick={() => onPreview(file)}
                       onContextMenu={(e) => handleContextMenu(e, file)}
                     >
