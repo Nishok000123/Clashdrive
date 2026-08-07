@@ -45,6 +45,17 @@ function getFloodWaitSeconds(err: unknown) {
   return parseInt(errorMessage.split("_").pop() || "", 10) || 30;
 }
 
+/** Normalise raw Telegram seconds and mtcute's Date wrapper to Unix seconds. */
+function getMessageDateSeconds(message: any): number {
+  const rawDate = message?.raw?.date ?? message?.date;
+  if (rawDate instanceof Date) return Math.floor(rawDate.getTime() / 1000);
+  if (typeof rawDate === "number") {
+    // Defensive support for already-normalised millisecond values.
+    return rawDate > 100_000_000_000 ? Math.floor(rawDate / 1000) : rawDate;
+  }
+  return Math.floor(Date.now() / 1000);
+}
+
 function isMessageInTopic(message: any, topicId: number): boolean {
   const raw = message?.raw ?? message;
   const replyTo = raw?.replyTo;
@@ -1208,7 +1219,7 @@ export async function listFilesInTopic(
           size: manifest.fileSize,
           topicId,
           manifest,
-          date: msg.date,
+          date: getMessageDateSeconds(msg),
           mimeType: chunkInfo.mimeType || mimeTypeFromName(manifest.fileName),
           chunkFileName: chunkInfo.fileName,
           message: chunkMsg,
@@ -1235,7 +1246,7 @@ export async function listFilesInTopic(
             size: docInfo.fileSize || 0,
             topicId,
             manifest: syntheticManifest,
-            date: m.date || Math.floor(Date.now() / 1000),
+            date: getMessageDateSeconds(m),
             mimeType: docInfo.mimeType || mimeTypeFromName(docInfo.fileName),
             chunkFileName: docInfo.fileName,
             message: m,
