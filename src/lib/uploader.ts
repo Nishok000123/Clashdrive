@@ -368,7 +368,7 @@ export async function uploadFile(
         try {
           currentStatus = "uploading";
           await ensureConnected();
-          const activeClient = client;
+          const activeClient = await getHelperClient(i % 6);
           const msgId = await uploadChunk(
             activeClient,
             chatIdNumber,

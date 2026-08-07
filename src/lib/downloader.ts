@@ -1287,7 +1287,8 @@ export async function downloadFileToMemory(
           throw new DOMException("Download aborted", "AbortError");
         }
         try {
-          const buffer = await downloadMediaWithWorkers(client, message, {
+          const activeClient = await getHelperClient(index % 6);
+          const buffer = await downloadMediaWithWorkers(activeClient, message, {
             workers: 12,
             progressCallback: (dl) => {
               chunkProgress[index] = Number(dl);
