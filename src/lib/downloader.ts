@@ -48,25 +48,54 @@ function getFloodWaitSeconds(err: unknown) {
 function getMessageDocumentInfo(message: any): {
   mimeType?: string;
   fileName?: string;
+  fileSize?: number;
 } {
   if (!message) return {};
-  if (message.media && message.media.type === "document") {
+
+  if (message.media) {
+    const m = message.media;
+    if (m.type === "document" || m.type === "video" || m.type === "audio" || m.type === "sticker") {
+      return {
+        mimeType: m.mimeType || "application/octet-stream",
+        fileName: m.fileName || `${m.type}_${message.id}`,
+        fileSize: m.fileSize || m.size || 0,
+      };
+    }
+    if (m.type === "photo") {
+      return {
+        mimeType: "image/jpeg",
+        fileName: `Photo_${message.id}.jpg`,
+        fileSize: m.fileSize || m.size || 0,
+      };
+    }
+  }
+
+  const media = message.media || message.raw?.media;
+  if (!media) return {};
+
+  if (media._ === "messageMediaDocument" && media.document) {
+    const doc = media.document;
+    if (doc._ === "document") {
+      const fileNameAttr = doc.attributes?.find(
+        (attr: any) => attr._ === "documentAttributeFilename"
+      );
+      return {
+        mimeType: doc.mimeType || "application/octet-stream",
+        fileName: fileNameAttr?.fileName || `File_${message.id}`,
+        fileSize: doc.size || 0,
+      };
+    }
+  }
+
+  if (media._ === "messageMediaPhoto" && media.photo) {
     return {
-      mimeType: message.media.mimeType,
-      fileName: message.media.fileName,
+      mimeType: "image/jpeg",
+      fileName: `Photo_${message.id}.jpg`,
+      fileSize: 0,
     };
   }
-  const media = message.media;
-  if (!media || media._ !== "messageMediaDocument") return {};
-  const document = media.document;
-  if (!document || document._ !== "document") return {};
-  const fileNameAttr = document.attributes?.find(
-    (attr: any) => attr._ === "documentAttributeFilename"
-  );
-  return {
-    mimeType: document.mimeType,
-    fileName: fileNameAttr?.fileName,
-  };
+
+  return {};
 }
 
 async function downloadMediaWithWorkers(
@@ -1042,6 +1071,8 @@ export async function listFilesInTopic(
       }
     }
 
+    const processedMessageIds = new Set<number>();
+
     for (const item of manifestItems) {
       const { msg, manifest } = item;
       if (referencedChunkAndThumbIds.has(msg.id) || isChunkOrThumbFileName(manifest.fileName)) {
@@ -1049,6 +1080,10 @@ export async function listFilesInTopic(
       }
       const chunkMsg = messageById.get(manifest.chunks[0]);
       const chunkInfo = getMessageDocumentInfo(chunkMsg);
+      processedMessageIds.add(msg.id);
+      for (const cid of manifest.chunks) processedMessageIds.add(cid);
+      if (typeof manifest.thumb === "number") processedMessageIds.add(manifest.thumb);
+
       files.push({
         id: msg.id,
         name: manifest.fileName,
@@ -1056,10 +1091,38 @@ export async function listFilesInTopic(
         topicId,
         manifest,
         date: msg.date,
-        mimeType: chunkInfo.mimeType,
+        mimeType: chunkInfo.mimeType || mimeTypeFromName(manifest.fileName),
         chunkFileName: chunkInfo.fileName,
         message: chunkMsg,
       });
+    }
+
+    // Fallback: Detect files/documents/media uploaded directly into topic without separate manifest
+    for (const m of messageById.values()) {
+      if (processedMessageIds.has(m.id) || referencedChunkAndThumbIds.has(m.id)) {
+        continue;
+      }
+      const docInfo = getMessageDocumentInfo(m);
+      if (docInfo.fileName && !isChunkOrThumbFileName(docInfo.fileName)) {
+        const syntheticManifest: ChunkManifest = {
+          type: "segmented_file",
+          fileName: docInfo.fileName,
+          fileSize: docInfo.fileSize || 0,
+          chunks: [m.id],
+        };
+
+        files.push({
+          id: m.id,
+          name: docInfo.fileName,
+          size: docInfo.fileSize || 0,
+          topicId,
+          manifest: syntheticManifest,
+          date: m.date || Math.floor(Date.now() / 1000),
+          mimeType: docInfo.mimeType || mimeTypeFromName(docInfo.fileName),
+          chunkFileName: docInfo.fileName,
+          message: m,
+        });
+      }
     }
   } catch (err) {
     console.error("Failed to list files in topic:", err);

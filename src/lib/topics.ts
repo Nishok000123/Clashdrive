@@ -1,5 +1,11 @@
 import { TelegramClient } from "@mtcute/web";
+import { Long } from "@mtcute/core";
 import type { TopicFolder, DriveConfig } from "../types";
+
+function getBareChannelId(idInput: string | number): number {
+  const idStr = String(idInput);
+  return Number(idStr.replace(/^-100/, "").replace(/^-/, ""));
+}
 
 /**
  * List all forum topics in the drive supergroup.
@@ -11,17 +17,48 @@ export async function getTopics(
 ): Promise<TopicFolder[]> {
   try {
     const topics = await client.getForumTopics(Number(config.chatId));
-    return topics.map((t) => ({
-      id: t.id,
-      title: t.title,
-      iconColor: t.iconColor ?? 0x6c63ff,
-      date: t.date ? Math.floor(t.date.getTime() / 1000) : Math.floor(Date.now() / 1000),
-      messageCount: 0,
-    }));
+    if (topics && topics.length > 0) {
+      return topics.map((t) => ({
+        id: t.id,
+        title: t.title,
+        iconColor: t.iconColor ?? 0x6c63ff,
+        date: t.date ? Math.floor(t.date.getTime() / 1000) : Math.floor(Date.now() / 1000),
+        messageCount: 0,
+      }));
+    }
   } catch (err) {
-    console.error("Failed to load topics:", err);
-    return [];
+    console.warn("High-level getForumTopics failed, using raw RPC fallback:", err);
   }
+
+  try {
+    const bareId = getBareChannelId(config.chatId);
+    const channelInput = {
+      _: "inputPeerChannel" as const,
+      channelId: bareId,
+      accessHash: Long.fromString(config.accessHash || "0"),
+    };
+    const raw: any = await client.call({
+      _: "messages.getForumTopics",
+      peer: channelInput,
+      offsetDate: 0,
+      offsetId: 0,
+      offsetTopic: 0,
+      limit: 100,
+    });
+    if (raw && raw.topics) {
+      return raw.topics.map((t: any) => ({
+        id: t.id,
+        title: t.title,
+        iconColor: t.icon_color ?? 0x6c63ff,
+        date: t.date || Math.floor(Date.now() / 1000),
+        messageCount: 0,
+      }));
+    }
+  } catch (rawErr) {
+    console.error("Failed to load topics via raw RPC:", rawErr);
+  }
+
+  return [];
 }
 
 /**
