@@ -302,7 +302,7 @@ export async function uploadFile(
     });
   };
 
-  const progressInterval = setInterval(emitProgress, 100);
+  const progressInterval = setInterval(emitProgress, 250);
 
   let abortPromise: Promise<never> | null = null;
   let abortHandler: (() => void) | null = null;
@@ -321,11 +321,12 @@ export async function uploadFile(
     emitProgress();
     const { segments } = getDynamicUploadConcurrency();
 
-    let thumbMsgId: number | undefined = undefined;
+    // Start background thumbnail upload in parallel with chunk upload tasks
+    const thumbPromise = (async (): Promise<number | undefined> => {
+      try {
+        const thumbBlob = await generateAnyThumbnail(file, file.name);
+        if (!thumbBlob) return undefined;
 
-    try {
-      const thumbBlob = await generateAnyThumbnail(file, file.name);
-      if (thumbBlob) {
         const thumbFile = new File([thumbBlob], `${file.name}.thumb.jpg`);
         const uploadedThumb = await client.uploadFile({
           file: thumbFile,
@@ -345,12 +346,13 @@ export async function uploadFile(
           }
         );
 
-        thumbMsgId = thumbMsg.id;
-        uploadedMsgIds.push(thumbMsgId);
+        uploadedMsgIds.push(thumbMsg.id);
+        return thumbMsg.id;
+      } catch (thumbErr) {
+        console.warn("Background thumbnail upload failed, proceeding without thumb:", thumbErr);
+        return undefined;
       }
-    } catch (thumbErr) {
-      console.warn("Failed to generate or upload thumbnail, proceeding without it:", thumbErr);
-    }
+    })();
 
     const tasks = Array.from({ length: totalChunks }).map((_, i) => async () => {
       if (signal?.aborted) {
@@ -435,6 +437,12 @@ export async function uploadFile(
 
     currentStatus = "finalizing";
     emitProgress();
+
+    // Await background thumbnail completion with a safety timeout fallback
+    const thumbMsgId = await Promise.race([
+      thumbPromise,
+      new Promise<undefined>((r) => setTimeout(() => r(undefined), 10000)),
+    ]);
 
     const manifestJson = buildManifest(file.name, file.size, chunkMsgIds, thumbMsgId, uploadChunkSize);
 

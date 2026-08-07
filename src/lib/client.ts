@@ -21,6 +21,7 @@ export function setClient(client: TelegramClient): void {
   _client = client;
   _clientInitPromise = null;
   _isConnected = true;
+  void warmupHelperClients();
 }
 
 /**
@@ -285,6 +286,19 @@ export async function destroyHelperClients(): Promise<void> {
     }
     _helperClients[i] = null;
   }
+}
+
+/**
+ * Pre-warm and establish connections for auxiliary pool sockets in background.
+ */
+export async function warmupHelperClients(): Promise<void> {
+  const sessionStr = getCurrentSessionString();
+  if (!sessionStr) return;
+  const promises = [];
+  for (let i = 1; i < MAX_HELPER_CLIENTS; i++) {
+    promises.push(getHelperClient(i).catch(() => null));
+  }
+  await Promise.all(promises);
 }
 
 

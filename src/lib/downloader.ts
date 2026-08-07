@@ -533,9 +533,11 @@ export async function handleStreamRequest(
 
   const sendBytes = (bytes: Uint8Array) => {
     if (aborted || bytes.length === 0) return;
-    const copy = new Uint8Array(bytes.length);
-    copy.set(bytes);
-    port.postMessage({ type: "CHUNK", chunk: copy.buffer }, [copy.buffer]);
+    const bufferToSend =
+      bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+        ? bytes.buffer
+        : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    port.postMessage({ type: "CHUNK", chunk: bufferToSend }, [bufferToSend]);
   };
 
   let bytesDiscarded = 0;
@@ -553,13 +555,13 @@ export async function handleStreamRequest(
         bytesDiscarded += data.length;
         return;
       }
-      data = data.slice(remainingToDiscard);
+      data = data.subarray(remainingToDiscard);
       bytesDiscarded = discardPrefix;
     }
 
     const remainingToSent = targetBytes - bytesSentToPort;
     if (data.length > remainingToSent) {
-      data = data.slice(0, remainingToSent);
+      data = data.subarray(0, remainingToSent);
     }
 
     if (data.length > 0) {
@@ -921,15 +923,20 @@ async function getManifestMessageMap(
   const missingMessageIds = chunkIds.filter((id) => !messageMap.has(id));
   const batchSize = 100;
   const peerInput = config ? getPeerInput(config) : chatId;
+  const batches: number[][] = [];
   for (let i = 0; i < missingMessageIds.length; i += batchSize) {
-    const fetchedMessages = await client.getMessages(
-      peerInput,
-      missingMessageIds.slice(i, i + batchSize)
+    batches.push(missingMessageIds.slice(i, i + batchSize));
+  }
+  if (batches.length > 0) {
+    const fetchedBatches = await Promise.all(
+      batches.map((batch) => client.getMessages(peerInput, batch))
     );
-    for (const msg of fetchedMessages) {
-      if (msg && msg.id) {
-        messageMap.set(msg.id, msg);
-        messageCache.set(msg.id, msg);
+    for (const fetchedMessages of fetchedBatches) {
+      for (const msg of fetchedMessages) {
+        if (msg && msg.id) {
+          messageMap.set(msg.id, msg);
+          messageCache.set(msg.id, msg);
+        }
       }
     }
   }
@@ -1129,7 +1136,7 @@ export async function downloadFile(
     const totalDownloaded = chunkProgress.reduce((a, b) => a + b, 0);
     onProgress?.(totalDownloaded, manifest.fileSize);
   };
-  const progressInterval = setInterval(emitProgress, 100);
+  const progressInterval = setInterval(emitProgress, 250);
 
   let abortPromise: Promise<never> | null = null;
   let abortHandler: (() => void) | null = null;
@@ -1246,7 +1253,7 @@ export async function downloadFileToMemory(
     const totalDownloaded = chunkProgress.reduce((a, b) => a + b, 0);
     onProgress?.(totalDownloaded, manifest.fileSize);
   };
-  const progressInterval = setInterval(emitProgress, 100);
+  const progressInterval = setInterval(emitProgress, 250);
 
   let abortPromise: Promise<never> | null = null;
   let abortHandler: (() => void) | null = null;

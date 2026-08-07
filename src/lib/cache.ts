@@ -82,7 +82,7 @@ export function getCachedRange(
   const available = Math.min(length, buf.validBytes - offset);
   if (available <= 0) return null;
 
-  return buf.data.slice(offset, offset + available);
+  return buf.data.subarray(offset, offset + available);
 }
 
 /**
