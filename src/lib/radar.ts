@@ -148,7 +148,7 @@ export async function scanForDriveGroup(
     // archived folder might fail
   }
 
-  // --- Step 3: Filter by TITLE only (zero API calls) ---
+  // --- Step 3: Filter candidates (title keywords OR forum supergroups) ---
   const TITLE_KEYWORDS = ["drive", "clash", "cloud", "storage", "vault", "tg cloud"];
   const titleCandidates: any[] = [];
 
@@ -157,23 +157,27 @@ export async function scanForDriveGroup(
     const peer = (dialog as any).peer || (dialog as any).chat;
     if (!peer) continue;
 
-    // Skip private 1-on-1 user chats (User.type === "user", Chat.type === "chat")
+    // Skip private 1-on-1 user chats (User.type === "user")
     if (peer.type === "user") continue;
 
     const titleLower = (peer.title || "").toLowerCase();
-    if (TITLE_KEYWORDS.some((kw) => titleLower.includes(kw))) {
+    const isTitleMatch = TITLE_KEYWORDS.some((kw) => titleLower.includes(kw));
+    const isForum = Boolean(peer.isForum || (peer.raw && "forum" in peer.raw && peer.raw.forum));
+
+    if (isTitleMatch || isForum) {
       titleCandidates.push(peer);
     }
   }
 
-  console.log(`[radar] Found ${titleCandidates.length} title-matched candidates out of ${dialogs.length} dialogs`);
+  console.log(`[radar] Found ${titleCandidates.length} candidate chats out of ${dialogs.length} dialogs`);
 
-  // --- Step 4: For each title candidate, check description + message history ---
+  // --- Step 4: For each title candidate, check description, forum topics + message history ---
   const scored: {
     config: DriveConfig;
     bareId: number;
     hasSignature: boolean;
     manifestCount: number;
+    topicCount: number;
     titleOnly: boolean;
   }[] = [];
 
@@ -182,7 +186,6 @@ export async function scanForDriveGroup(
       // 4a. Check description for signature
       let about = "";
       try {
-        // Pass marked ID or the peer directly
         const markedIdNum = Number(getMarkedChannelId(chat.id));
         const full = await client.getFullChat(markedIdNum);
         about = full.bio || "";
@@ -206,11 +209,19 @@ export async function scanForDriveGroup(
           });
           about = full.fullChat?.about ?? "";
         } catch {
-          // can't get description, continue anyway — we'll check messages
+          // continue anyway
         }
       }
 
       const hasSignature = about.includes(DRIVE_SIGNATURE);
+
+      // 4b. Check forum topics count
+      let topicCount = 0;
+      try {
+        const markedIdNum = Number(getMarkedChannelId(chat.id));
+        const topics = await client.getForumTopics(markedIdNum).catch(() => []);
+        topicCount = topics.length;
+      } catch {}
 
       // 4b. Check message history for segmented_file manifests
       let manifestCount = 0;
@@ -277,7 +288,7 @@ export async function scanForDriveGroup(
       }
 
       // Add candidate: with signature/manifests = high priority, title-only = low priority fallback
-      if (hasSignature || manifestCount > 0) {
+      if (hasSignature || manifestCount > 0 || topicCount > 0) {
         const markedId = getMarkedChannelId(chat.id);
         const bareId = getBareChannelId(chat.id);
         const accessHashStr = chat.raw?.accessHash
@@ -290,10 +301,9 @@ export async function scanForDriveGroup(
           accessHash: accessHashStr,
         };
 
-        scored.push({ config, bareId, hasSignature, manifestCount, titleOnly: false });
-        console.log(`[radar] Candidate: "${chat.title}" sig=${hasSignature} manifests=${manifestCount} bareId=${bareId}`);
+        scored.push({ config, bareId, hasSignature, manifestCount, topicCount, titleOnly: false });
+        console.log(`[radar] Candidate: "${chat.title}" sig=${hasSignature} topics=${topicCount} manifests=${manifestCount} bareId=${bareId}`);
       } else {
-        // Title-only fallback: still add it but with lowest priority
         const markedId = getMarkedChannelId(chat.id);
         const bareId = getBareChannelId(chat.id);
         const accessHashStr = chat.raw?.accessHash
@@ -306,7 +316,7 @@ export async function scanForDriveGroup(
           accessHash: accessHashStr,
         };
 
-        scored.push({ config, bareId, hasSignature: false, manifestCount: 0, titleOnly: true });
+        scored.push({ config, bareId, hasSignature: false, manifestCount: 0, topicCount: 0, titleOnly: true });
         console.log(`[radar] Title-only fallback: "${chat.title}" bareId=${bareId}`);
       }
     } catch (err) {
@@ -317,16 +327,16 @@ export async function scanForDriveGroup(
 
   if (scored.length > 0) {
     scored.sort((a, b) => {
-      // Verified candidates first, title-only last
       if (a.titleOnly !== b.titleOnly) return a.titleOnly ? 1 : -1;
-      if (b.manifestCount !== a.manifestCount) return b.manifestCount - a.manifestCount;
       if (b.hasSignature !== a.hasSignature) return (b.hasSignature ? 1 : 0) - (a.hasSignature ? 1 : 0);
+      if (b.topicCount !== a.topicCount) return b.topicCount - a.topicCount;
+      if (b.manifestCount !== a.manifestCount) return b.manifestCount - a.manifestCount;
       return a.bareId - b.bareId;
     });
 
     const bestCandidate = scored[0];
     const best = bestCandidate.config;
-    console.log(`[radar] Selected drive: "${best.chatTitle}" (${best.chatId})`);
+    console.log(`[radar] Selected drive: "${best.chatTitle}" (${best.chatId}) with ${bestCandidate.topicCount} topics`);
     if (!bestCandidate.hasSignature) {
       await stampDriveSignature(client, best.chatId, best.accessHash);
     }
