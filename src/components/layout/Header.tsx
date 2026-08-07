@@ -161,7 +161,7 @@ export function Header({
             }
           />
           {!searchQuery && (
-            <div className="absolute right-4 top-1/2 -translate-y-1/2 hidden sm:flex items-center gap-0.5 pointer-events-none select-none text-[9px] font-semibold text-md-on-surface-variant bg-md-surface-container-high px-1.5 py-0.5 rounded-md border border-md-outline-variant/30">
+            <div className="absolute right-4 top-1/2 -translate-y-1/2 hidden lg:flex items-center gap-0.5 pointer-events-none select-none text-[9px] font-semibold text-md-on-surface-variant bg-md-surface-container-high px-1.5 py-0.5 rounded-md border border-md-outline-variant/30">
               <span>Ctrl</span>
               <span>K</span>
             </div>
