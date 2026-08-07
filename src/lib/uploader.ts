@@ -212,7 +212,7 @@ async function uploadChunk(
     file: fileToUpload,
     fileName: chunkFileName,
     fileSize: fileToUpload.size,
-    partSize: 512,
+    partSize: 1024,
     requestsPerConnection: 6,
     progressCallback: (uploaded, total) => {
       onChunkProgress?.(uploaded, total);
