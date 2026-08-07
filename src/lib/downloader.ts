@@ -1080,8 +1080,111 @@ export async function listFilesInTopic(
       }
     }
 
-    // Fallback: If General Topic or if no thread reply messages were returned, query main history via getHistory
-    if (messageById.size === 0) {
+    const extractFilesFromMap = async (): Promise<DriveFile[]> => {
+      const parsedFiles: DriveFile[] = [];
+      const manifestItems: { msg: any; manifest: ChunkManifest }[] = [];
+      const referencedChunkAndThumbIds = new Set<number>();
+      const missingChunkIds: number[] = [];
+
+      for (const m of messageById.values()) {
+        const text = typeof m.message === "string" ? m.message : typeof m.text === "string" ? m.text : "";
+        if (!text) continue;
+        const manifest = parseManifest(text);
+        if (manifest && !isChunkOrThumbFileName(manifest.fileName)) {
+          manifestItems.push({ msg: m, manifest });
+          for (const chunkId of manifest.chunks) {
+            referencedChunkAndThumbIds.add(chunkId);
+            if (!messageById.has(chunkId)) {
+              missingChunkIds.push(chunkId);
+            }
+          }
+          if (typeof manifest.thumb === "number") {
+            referencedChunkAndThumbIds.add(manifest.thumb);
+            if (!messageById.has(manifest.thumb)) {
+              missingChunkIds.push(manifest.thumb);
+            }
+          }
+        }
+      }
+
+      if (missingChunkIds.length > 0) {
+        try {
+          const peerInput = getPeerInput(config);
+          const batchSize = 100;
+          for (let i = 0; i < missingChunkIds.length; i += batchSize) {
+            const slice = missingChunkIds.slice(i, i + batchSize);
+            const chunkMessages: any = await client.getMessages(peerInput, slice);
+            for (const chunkMsg of chunkMessages) {
+              if (chunkMsg && chunkMsg.id) {
+                messageById.set(chunkMsg.id, chunkMsg);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("[listFilesInTopic] Failed to batch fetch chunk messages:", err);
+        }
+      }
+
+      const processedMessageIds = new Set<number>();
+
+      for (const item of manifestItems) {
+        const { msg, manifest } = item;
+        if (referencedChunkAndThumbIds.has(msg.id) || isChunkOrThumbFileName(manifest.fileName)) {
+          continue;
+        }
+        const chunkMsg = messageById.get(manifest.chunks[0]);
+        const chunkInfo = getMessageDocumentInfo(chunkMsg);
+        processedMessageIds.add(msg.id);
+        for (const cid of manifest.chunks) processedMessageIds.add(cid);
+        if (typeof manifest.thumb === "number") processedMessageIds.add(manifest.thumb);
+
+        parsedFiles.push({
+          id: msg.id,
+          name: manifest.fileName,
+          size: manifest.fileSize,
+          topicId,
+          manifest,
+          date: msg.date,
+          mimeType: chunkInfo.mimeType || mimeTypeFromName(manifest.fileName),
+          chunkFileName: chunkInfo.fileName,
+          message: chunkMsg,
+        });
+      }
+
+      // Fallback: Detect files/documents/media uploaded directly into topic without separate manifest
+      for (const m of messageById.values()) {
+        if (processedMessageIds.has(m.id) || referencedChunkAndThumbIds.has(m.id)) {
+          continue;
+        }
+        const docInfo = getMessageDocumentInfo(m);
+        if (docInfo.fileName) {
+          const syntheticManifest: ChunkManifest = {
+            type: "segmented_file",
+            fileName: docInfo.fileName,
+            fileSize: docInfo.fileSize || 0,
+            chunks: [m.id],
+          };
+
+          parsedFiles.push({
+            id: m.id,
+            name: docInfo.fileName,
+            size: docInfo.fileSize || 0,
+            topicId,
+            manifest: syntheticManifest,
+            date: m.date || Math.floor(Date.now() / 1000),
+            mimeType: docInfo.mimeType || mimeTypeFromName(docInfo.fileName),
+            chunkFileName: docInfo.fileName,
+            message: m,
+          });
+        }
+      }
+      return parsedFiles;
+    };
+
+    let files = await extractFilesFromMap();
+
+    // Fallback: If 0 files were extracted (e.g. topic contained service messages or legacy uploads), query main history via getHistory
+    if (files.length === 0) {
       offsetId = 0;
       while (true) {
         let historyMsgs: any[] = [];
@@ -1128,103 +1231,8 @@ export async function listFilesInTopic(
 
         if (historyMsgs.length < limit && addedCount === 0) break;
       }
-    }
 
-    const manifestItems: { msg: any; manifest: ChunkManifest }[] = [];
-    const referencedChunkAndThumbIds = new Set<number>();
-    const missingChunkIds: number[] = [];
-
-    for (const m of messageById.values()) {
-      const text = typeof m.message === "string" ? m.message : typeof m.text === "string" ? m.text : "";
-      if (!text) continue;
-      const manifest = parseManifest(text);
-      if (manifest && !isChunkOrThumbFileName(manifest.fileName)) {
-        manifestItems.push({ msg: m, manifest });
-        for (const chunkId of manifest.chunks) {
-          referencedChunkAndThumbIds.add(chunkId);
-          if (!messageById.has(chunkId)) {
-            missingChunkIds.push(chunkId);
-          }
-        }
-        if (typeof manifest.thumb === "number") {
-          referencedChunkAndThumbIds.add(manifest.thumb);
-          if (!messageById.has(manifest.thumb)) {
-            missingChunkIds.push(manifest.thumb);
-          }
-        }
-      }
-    }
-
-    if (missingChunkIds.length > 0) {
-      try {
-        const peerInput = getPeerInput(config);
-        const batchSize = 100;
-        for (let i = 0; i < missingChunkIds.length; i += batchSize) {
-          const slice = missingChunkIds.slice(i, i + batchSize);
-          const chunkMessages: any = await client.getMessages(peerInput, slice);
-          for (const chunkMsg of chunkMessages) {
-            if (chunkMsg && chunkMsg.id) {
-              messageById.set(chunkMsg.id, chunkMsg);
-            }
-          }
-        }
-      } catch (err) {
-        console.warn("[listFilesInTopic] Failed to batch fetch chunk messages:", err);
-      }
-    }
-
-    const processedMessageIds = new Set<number>();
-
-    for (const item of manifestItems) {
-      const { msg, manifest } = item;
-      if (referencedChunkAndThumbIds.has(msg.id) || isChunkOrThumbFileName(manifest.fileName)) {
-        continue;
-      }
-      const chunkMsg = messageById.get(manifest.chunks[0]);
-      const chunkInfo = getMessageDocumentInfo(chunkMsg);
-      processedMessageIds.add(msg.id);
-      for (const cid of manifest.chunks) processedMessageIds.add(cid);
-      if (typeof manifest.thumb === "number") processedMessageIds.add(manifest.thumb);
-
-      files.push({
-        id: msg.id,
-        name: manifest.fileName,
-        size: manifest.fileSize,
-        topicId,
-        manifest,
-        date: msg.date,
-        mimeType: chunkInfo.mimeType || mimeTypeFromName(manifest.fileName),
-        chunkFileName: chunkInfo.fileName,
-        message: chunkMsg,
-      });
-    }
-
-    // Fallback: Detect files/documents/media uploaded directly into topic without separate manifest
-    for (const m of messageById.values()) {
-      if (processedMessageIds.has(m.id) || referencedChunkAndThumbIds.has(m.id)) {
-        continue;
-      }
-      const docInfo = getMessageDocumentInfo(m);
-      if (docInfo.fileName) {
-        const syntheticManifest: ChunkManifest = {
-          type: "segmented_file",
-          fileName: docInfo.fileName,
-          fileSize: docInfo.fileSize || 0,
-          chunks: [m.id],
-        };
-
-        files.push({
-          id: m.id,
-          name: docInfo.fileName,
-          size: docInfo.fileSize || 0,
-          topicId,
-          manifest: syntheticManifest,
-          date: m.date || Math.floor(Date.now() / 1000),
-          mimeType: docInfo.mimeType || mimeTypeFromName(docInfo.fileName),
-          chunkFileName: docInfo.fileName,
-          message: m,
-        });
-      }
+      files = await extractFilesFromMap();
     }
   } catch (err) {
     console.error("Failed to list files in topic:", err);
