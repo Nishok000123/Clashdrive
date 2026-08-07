@@ -262,6 +262,8 @@ export async function scanForDriveGroup(
               const text = typeof m.message === "string" ? m.message : typeof m.text === "string" ? m.text : "";
               if (text && (text.includes('"segmented_file"') || parseManifest(text) !== null)) {
                 manifestCount++;
+              } else if (m.media || (m.raw && m.raw.media)) {
+                manifestCount++;
               }
             }
           } catch {
@@ -278,7 +280,11 @@ export async function scanForDriveGroup(
           const markedIdNum = Number(getMarkedChannelId(chat.id));
           const history = await client.getHistory(markedIdNum, { limit: 30 });
           for (const msg of history) {
-            if (msg && msg.text && (msg.text.includes('"segmented_file"') || parseManifest(msg.text) !== null)) {
+            const mAny = msg as any;
+            const text = typeof mAny.message === "string" ? mAny.message : typeof msg.text === "string" ? msg.text : "";
+            if (text && (text.includes('"segmented_file"') || parseManifest(text) !== null)) {
+              manifestCount++;
+            } else if (mAny.media || (msg.raw && (msg.raw as any).media)) {
               manifestCount++;
             }
           }
