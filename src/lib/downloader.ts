@@ -80,7 +80,7 @@ async function downloadMediaWithWorkers(
 ): Promise<Uint8Array> {
   const targetLocation = message?.media ?? message;
   const buffer = await client.downloadAsBuffer(targetLocation, {
-    partSize: options.partSizeKb || 1024,
+    partSize: options.partSizeKb || 512,
     progressCallback: (dl, total) => {
       options.progressCallback?.(dl, total);
     },
