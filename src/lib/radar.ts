@@ -328,9 +328,10 @@ export async function scanForDriveGroup(
   if (scored.length > 0) {
     scored.sort((a, b) => {
       if (a.titleOnly !== b.titleOnly) return a.titleOnly ? 1 : -1;
+      const aData = (a.topicCount > 0 ? a.topicCount : 0) + (a.manifestCount * 5);
+      const bData = (b.topicCount > 0 ? b.topicCount : 0) + (b.manifestCount * 5);
+      if (bData !== aData) return bData - aData;
       if (b.hasSignature !== a.hasSignature) return (b.hasSignature ? 1 : 0) - (a.hasSignature ? 1 : 0);
-      if (b.topicCount !== a.topicCount) return b.topicCount - a.topicCount;
-      if (b.manifestCount !== a.manifestCount) return b.manifestCount - a.manifestCount;
       return a.bareId - b.bareId;
     });
 
