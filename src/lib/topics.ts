@@ -16,16 +16,19 @@ export async function getTopics(
   config: DriveConfig
 ): Promise<TopicFolder[]> {
   try {
-    const topics = await client.getForumTopics(Number(config.chatId));
-    if (topics && topics.length > 0) {
-      return topics.map((t) => ({
-        id: t.id,
-        title: t.title,
-        iconColor: t.iconColor ?? 0x6c63ff,
-        date: t.date ? Math.floor(t.date.getTime() / 1000) : Math.floor(Date.now() / 1000),
+    const topics: TopicFolder[] = [];
+    // getForumTopics fetches one page. The iterator follows Telegram's
+    // compound cursor, so drives with more than 100 folders are complete.
+    for await (const topic of client.iterForumTopics(Number(config.chatId))) {
+      topics.push({
+        id: topic.id,
+        title: topic.title,
+        iconColor: topic.iconColor ?? 0x6c63ff,
+        date: topic.date ? Math.floor(topic.date.getTime() / 1000) : Math.floor(Date.now() / 1000),
         messageCount: 0,
-      }));
+      });
     }
+    return topics;
   } catch (err) {
     console.warn("High-level getForumTopics failed, using raw RPC fallback:", err);
   }

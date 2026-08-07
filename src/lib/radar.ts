@@ -18,6 +18,26 @@ function getMarkedChannelId(idInput: string | number): string {
   return `-100${bare}`;
 }
 
+function accessHashString(value: unknown): string {
+  return value == null ? "0" : String(value);
+}
+
+async function refreshDriveAccessHash(
+  client: TelegramClient,
+  config: DriveConfig
+): Promise<DriveConfig> {
+  const chatId = getMarkedChannelId(config.chatId);
+  try {
+    const peer: any = await client.resolvePeer(Number(chatId));
+    if (peer?._ === "inputPeerChannel" && peer.accessHash != null) {
+      return { ...config, chatId, accessHash: accessHashString(peer.accessHash) };
+    }
+  } catch (err) {
+    console.warn("[radar] Could not refresh the drive access hash:", err);
+  }
+  return { ...config, chatId };
+}
+
 async function stampDriveSignature(
   client: TelegramClient,
   chatId: string | number,
@@ -60,7 +80,7 @@ async function verifyDriveGroup(
       if (!bio.includes(DRIVE_SIGNATURE)) {
         await stampDriveSignature(client, config.chatId, config.accessHash, bio);
       }
-      return { ...config, chatId: markedIdStr };
+      return refreshDriveAccessHash(client, { ...config, chatId: markedIdStr });
     }
   } catch {
     // Fall back to direct raw call
@@ -82,7 +102,7 @@ async function verifyDriveGroup(
       if (!about.includes(DRIVE_SIGNATURE)) {
         await stampDriveSignature(client, config.chatId, config.accessHash, about);
       }
-      return { ...config, chatId: markedIdStr };
+      return refreshDriveAccessHash(client, { ...config, chatId: markedIdStr });
     }
   } catch (err) {
     console.warn("verifyDriveGroup failed:", err);
@@ -297,9 +317,9 @@ export async function scanForDriveGroup(
       if (hasSignature || manifestCount > 0 || topicCount > 0) {
         const markedId = getMarkedChannelId(chat.id);
         const bareId = getBareChannelId(chat.id);
-        const accessHashStr = chat.raw?.accessHash
-          ? chat.raw.accessHash.toString()
-          : "0";
+        const accessHashStr = accessHashString(
+          chat.raw?.accessHash ?? chat.inputPeer?.accessHash ?? chat.accessHash
+        );
 
         const config: DriveConfig = {
           chatId: markedId,
@@ -312,9 +332,9 @@ export async function scanForDriveGroup(
       } else {
         const markedId = getMarkedChannelId(chat.id);
         const bareId = getBareChannelId(chat.id);
-        const accessHashStr = chat.raw?.accessHash
-          ? chat.raw.accessHash.toString()
-          : "0";
+        const accessHashStr = accessHashString(
+          chat.raw?.accessHash ?? chat.inputPeer?.accessHash ?? chat.accessHash
+        );
 
         const config: DriveConfig = {
           chatId: markedId,
@@ -428,4 +448,3 @@ export async function createDriveGroup(
 
   return config;
 }
-

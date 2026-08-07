@@ -45,6 +45,133 @@ function getFloodWaitSeconds(err: unknown) {
   return parseInt(errorMessage.split("_").pop() || "", 10) || 30;
 }
 
+function isMessageInTopic(message: any, topicId: number): boolean {
+  const raw = message?.raw ?? message;
+  const replyTo = raw?.replyTo;
+  const threadId = replyTo?.replyToTopId
+    ?? message?.replyToMessage?.threadId
+    ?? replyTo?.replyToMsgId
+    ?? message?.replyToMessage?.id;
+
+  // The General topic is represented by topic id 1. Forum messages always
+  // carry a top-message id, but treating messages with no topic header as
+  // General also preserves files uploaded before forums were enabled.
+  if (topicId === 1 || topicId <= 0) {
+    return threadId === 1 || threadId == null;
+  }
+
+  return threadId === topicId;
+}
+
+async function getReplyMessages(
+  client: TelegramClient,
+  peer: any,
+  topicId: number
+): Promise<any[]> {
+  const messagesById = new Map<number, any>();
+  let offsetId = 0;
+  const limit = 100;
+
+  for (;;) {
+    let result: any;
+    let attempts = 0;
+    while (attempts < 3) {
+      try {
+        result = await client.call({
+          _: "messages.getReplies",
+          peer,
+          msgId: topicId,
+          offsetId,
+          offsetDate: 0,
+          addOffset: 0,
+          limit,
+          maxId: 0,
+          minId: 0,
+          hash: Long.ZERO,
+        });
+        break;
+      } catch (error) {
+        const wait = getFloodWaitSeconds(error);
+        if (wait === null || ++attempts >= 3) throw error;
+        console.warn(`[listFilesInTopic] Flood wait for topic ${topicId}; retrying in ${wait}s.`);
+        await new Promise((resolve) => setTimeout(resolve, wait * 1000));
+      }
+    }
+
+    const page = result?.messages ?? [];
+    if (page.length === 0) break;
+
+    let added = 0;
+    let oldestId = Number.POSITIVE_INFINITY;
+    for (const message of page) {
+      if (!message?.id) continue;
+      if (!messagesById.has(message.id)) {
+        messagesById.set(message.id, message);
+        added++;
+      }
+      oldestId = Math.min(oldestId, message.id);
+    }
+
+    // Telegram returns newest first. The last/lowest id is the inclusive
+    // cursor for the next page. Stop on any non-progressing cursor instead
+    // of risking an endless first-page loop.
+    if (
+      added === 0 ||
+      !Number.isFinite(oldestId) ||
+      oldestId <= 1 ||
+      (offsetId !== 0 && oldestId >= offsetId)
+    ) {
+      break;
+    }
+    offsetId = oldestId;
+
+    const total = typeof result?.count === "number" ? result.count : undefined;
+    if (total !== undefined && messagesById.size >= total) break;
+  }
+
+  return [...messagesById.values()];
+}
+
+async function getTopicMessagesFromHistory(
+  client: TelegramClient,
+  peer: any,
+  topicId: number
+): Promise<any[]> {
+  const messagesById = new Map<number, any>();
+  let offset: { id: number; date: number } | undefined;
+
+  for (;;) {
+    let page: any;
+    let attempts = 0;
+    while (attempts < 3) {
+      try {
+        page = await client.getHistory(peer, { limit: 100, offset });
+        break;
+      } catch (error) {
+        const wait = getFloodWaitSeconds(error);
+        if (wait === null || ++attempts >= 3) throw error;
+        console.warn(`[listFilesInTopic] Flood wait while scanning topic ${topicId}; retrying in ${wait}s.`);
+        await new Promise((resolve) => setTimeout(resolve, wait * 1000));
+      }
+    }
+    if (page.length === 0) break;
+
+    for (const message of page) {
+      if (!message?.id || !isMessageInTopic(message, topicId) || messagesById.has(message.id)) continue;
+      messagesById.set(message.id, message);
+    }
+
+    const next = page.next as { id: number; date: number } | undefined;
+    if (!next || !next.id || (offset && next.id >= offset.id)) break;
+    offset = next;
+
+    // A page can legitimately contain no messages from this topic, so only
+    // the server's next cursor determines completion.
+  }
+
+  return [...messagesById.values()];
+}
+
 function getMessageDocumentInfo(message: any): {
   mimeType?: string;
   fileName?: string;
@@ -997,86 +1124,23 @@ export async function listFilesInTopic(
   config: DriveConfig,
   topicId: number
 ): Promise<DriveFile[]> {
-  const files: DriveFile[] = [];
-  const chatIdNumber = Number(config.chatId);
-
   try {
-    const bareId = Number(config.chatId.replace(/^-100/, "").replace(/^-/, ""));
-    const channelInput = {
-      _: "inputPeerChannel" as const,
-      channelId: bareId,
-      accessHash: Long.fromString(config.accessHash || "0"),
-    };
+    // Resolving the peer refreshes an absent/stale access hash from mtcute's
+    // entity cache. Constructing inputPeerChannel with `0` made getReplies
+    // fail for drives recovered from older localStorage entries.
+    const peer = await client.resolvePeer(Number(config.chatId));
     const messageById = new Map<number, any>();
-    let offsetId = 0;
-    const limit = 100;
-
     const isGeneralTopic = topicId === 1 || topicId <= 0;
 
     if (!isGeneralTopic) {
-      while (true) {
-        let result: any = null;
-        let attempts = 0;
-        while (attempts < 3) {
-          try {
-            result = await client.call({
-              _: "messages.getReplies",
-              peer: channelInput,
-              msgId: topicId,
-              offsetId,
-              offsetDate: 0,
-              addOffset: 0,
-              limit,
-              maxId: 0,
-              minId: 0,
-              hash: Long.ZERO,
-            });
-            break;
-          } catch (e: any) {
-            const wait = getFloodWaitSeconds(e);
-            if (wait !== null) {
-              console.warn(`[listFilesInTopic] FloodWait: sleeping ${wait}s...`);
-              await new Promise((r) => setTimeout(r, wait * 1000));
-              attempts++;
-              continue;
-            }
-            console.warn(`[listFilesInTopic] getReplies failed for topic ${topicId}:`, e);
-            break;
-          }
+      try {
+        for (const message of await getReplyMessages(client, peer, topicId)) {
+          messageById.set(message.id, message);
         }
-
-        if (!result || !result.messages) break;
-        const messages = result.messages ?? [];
-        if (messages.length === 0) break;
-
-        let addedCount = 0;
-        let lowestId = Infinity;
-
-        for (const m of messages) {
-          if (m && m.id) {
-            if (!messageById.has(m.id)) {
-              messageById.set(m.id, m);
-              addedCount++;
-            }
-            if (m.id < lowestId) {
-              lowestId = m.id;
-            }
-          }
-        }
-
-        if (lowestId === Infinity || lowestId <= 1) {
-          break;
-        }
-
-        if (offsetId > 0 && lowestId >= offsetId) {
-          offsetId = offsetId - 1;
-        } else {
-          offsetId = lowestId;
-        }
-
-        if (messages.length < limit && addedCount === 0) {
-          break;
-        }
+      } catch (error) {
+        // The complete-history scan below is intentionally retained as a
+        // compatibility path for migrated/legacy forum topics.
+        console.warn(`[listFilesInTopic] getReplies failed for topic ${topicId}; scanning history.`, error);
       }
     }
 
@@ -1183,62 +1247,22 @@ export async function listFilesInTopic(
 
     let files = await extractFilesFromMap();
 
-    // Fallback: If 0 files were extracted (e.g. topic contained service messages or legacy uploads), query main history via getHistory
+    // Fallback: scan every history page and keep only this topic. This covers
+    // old topics and also General, which has no reply-thread endpoint.
     if (files.length === 0) {
-      offsetId = 0;
-      while (true) {
-        let historyMsgs: any[] = [];
-        let attempts = 0;
-        while (attempts < 3) {
-          try {
-            const res = await (client.getHistory as any)(chatIdNumber, { offset: offsetId, limit });
-            historyMsgs = res || [];
-            break;
-          } catch (e: any) {
-            const wait = getFloodWaitSeconds(e);
-            if (wait !== null) {
-              await new Promise((r) => setTimeout(r, wait * 1000));
-              attempts++;
-              continue;
-            }
-            break;
-          }
-        }
-
-        if (historyMsgs.length === 0) break;
-        let addedCount = 0;
-        let lowestId = Infinity;
-
-        for (const m of historyMsgs) {
-          if (m && m.id) {
-            if (!messageById.has(m.id)) {
-              messageById.set(m.id, m);
-              addedCount++;
-            }
-            if (m.id < lowestId) {
-              lowestId = m.id;
-            }
-          }
-        }
-
-        if (lowestId === Infinity || lowestId <= 1) break;
-
-        if (offsetId > 0 && lowestId >= offsetId) {
-          offsetId = offsetId - 1;
-        } else {
-          offsetId = lowestId;
-        }
-
-        if (historyMsgs.length < limit && addedCount === 0) break;
+      for (const message of await getTopicMessagesFromHistory(client, peer, topicId)) {
+        messageById.set(message.id, message);
       }
 
       files = await extractFilesFromMap();
     }
+    return files;
   } catch (err) {
+    // Do not turn a transport/permission failure into a cached "0 files".
+    // Callers can retry the folder after the connection recovers.
     console.error("Failed to list files in topic:", err);
+    throw err;
   }
-
-  return files;
 }
 
 export async function deleteDriveFile(

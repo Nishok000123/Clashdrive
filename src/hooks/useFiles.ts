@@ -59,11 +59,14 @@ export function useFiles() {
       }
 
       setLoadingFiles(true);
-      await ensureConnected();
-      const result = await listFilesInTopic(client, config, topicId);
-      fileCache.current.set(topicId, result);
-      setFiles(result);
-      setLoadingFiles(false);
+      try {
+        await ensureConnected();
+        const result = await listFilesInTopic(client, config, topicId);
+        fileCache.current.set(topicId, result);
+        setFiles(result);
+      } finally {
+        setLoadingFiles(false);
+      }
     },
     []
   );
