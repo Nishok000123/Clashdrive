@@ -35,6 +35,7 @@ export function useFiles() {
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
   const [favouriteFiles, setFavouriteFiles] = useState<DriveFile[]>([]);
   const fileCache = useRef<Map<number, DriveFile[]>>(new Map());
+  const activeTopicIdRef = useRef<number | null>(null);
   const uploadQueue = useRef<(() => Promise<void>)[]>([]);
   const activeUploadCount = useRef<number>(0);
   const MAX_CONCURRENT_UPLOADS = 3;
@@ -54,6 +55,7 @@ export function useFiles() {
       topicId: number,
       force = false
     ) => {
+      activeTopicIdRef.current = topicId;
       if (!force && fileCache.current.has(topicId)) {
         setFiles(fileCache.current.get(topicId)!);
         return;
@@ -614,9 +616,12 @@ export function useFiles() {
         }
       }
 
-      const pending = folders.filter((folder) => !fileCache.current.has(folder.id));
+      // IndexedDB is a fast startup snapshot, not the source of truth.  In
+      // particular, older versions could persist a partial topic scan and
+      // then never ask Telegram for that topic again.
+      const pending = [...folders];
       const attempts = new Map<number, number>();
-      let completed = folders.length - pending.length;
+      let completed = 0;
       setIndexingProgress({ current: completed, total: folders.length });
 
       while (pending.length > 0) {
@@ -626,6 +631,9 @@ export function useFiles() {
           const result = await listFilesInTopic(client, config, folder.id);
           fileCache.current.set(folder.id, result);
           void saveTopicFilesToDB(folder.id, result);
+          if (activeTopicIdRef.current === folder.id) {
+            setFiles(result);
+          }
           completed++;
           setIndexingProgress({ current: completed, total: folders.length });
           await new Promise((resolve) => setTimeout(resolve, 100));

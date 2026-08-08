@@ -24,6 +24,8 @@ interface ChunkBuffer {
 
 const chunkBuffers = new Map<string, ChunkBuffer>();
 const MAX_CACHED_CHUNKS = 30;
+const MAX_CACHE_BYTES = 512 * 1024 * 1024;
+const INITIAL_BUFFER_BYTES = 4 * 1024 * 1024;
 
 function makeKey(fileId: string, chunkIndex: number): string {
   return `${fileId}:${chunkIndex}`;
@@ -33,18 +35,28 @@ function touchEntry(buf: ChunkBuffer): void {
   buf.lastAccess = Date.now();
 }
 
-function evictIfNeeded(): void {
-  if (chunkBuffers.size < MAX_CACHED_CHUNKS) return;
+function evictIfNeeded(requiredBytes = 0, protectedKey?: string): void {
+  const cacheBytes = () => {
+    let total = 0;
+    for (const buf of chunkBuffers.values()) total += buf.data.byteLength;
+    return total;
+  };
 
-  let oldestKey: string | null = null;
-  let oldestTime = Infinity;
-  for (const [key, buf] of chunkBuffers) {
-    if (buf.lastAccess < oldestTime) {
-      oldestTime = buf.lastAccess;
-      oldestKey = key;
+  while (
+    chunkBuffers.size > 0 &&
+    (chunkBuffers.size >= MAX_CACHED_CHUNKS || cacheBytes() + requiredBytes > MAX_CACHE_BYTES)
+  ) {
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+    for (const [key, buf] of chunkBuffers) {
+      if (key !== protectedKey && buf.lastAccess < oldestTime) {
+        oldestTime = buf.lastAccess;
+        oldestKey = key;
+      }
     }
+    if (!oldestKey) break;
+    chunkBuffers.delete(oldestKey);
   }
-  if (oldestKey) chunkBuffers.delete(oldestKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -104,9 +116,14 @@ export function appendCachedData(
   const key = makeKey(fileId, chunkIndex);
   let buf = chunkBuffers.get(key);
 
+  // This cache tracks a contiguous prefix.  Caching a seek near the end of a
+  // 100+ MB Telegram document would otherwise allocate the whole gap and is
+  // the main cause of playback stalls on large videos.
+  if ((!buf && offset > 0) || (buf && offset > buf.validBytes)) return;
+
   if (!buf) {
-    evictIfNeeded();
-    const allocSize = Math.max(totalChunkSize, offset + data.length);
+    const allocSize = Math.min(totalChunkSize, Math.max(INITIAL_BUFFER_BYTES, offset + data.length));
+    evictIfNeeded(allocSize);
     buf = {
       data: new Uint8Array(allocSize),
       validBytes: 0,
@@ -118,7 +135,9 @@ export function appendCachedData(
   // Grow backing buffer if needed
   const end = offset + data.length;
   if (end > buf.data.length) {
-    const newBuf = new Uint8Array(Math.max(end, buf.data.length * 2));
+    const nextSize = Math.min(totalChunkSize, Math.max(end, buf.data.length * 2));
+    evictIfNeeded(nextSize - buf.data.length, key);
+    const newBuf = new Uint8Array(nextSize);
     newBuf.set(buf.data.subarray(0, buf.validBytes));
     buf.data = newBuf;
   }
@@ -147,7 +166,8 @@ export function setFullCachedChunk(
   data: Uint8Array
 ): void {
   const key = makeKey(fileId, chunkIndex);
-  if (!chunkBuffers.has(key)) evictIfNeeded();
+  const existing = chunkBuffers.get(key);
+  evictIfNeeded(data.byteLength - (existing?.data.byteLength ?? 0), key);
   chunkBuffers.set(key, {
     data,
     validBytes: data.length,

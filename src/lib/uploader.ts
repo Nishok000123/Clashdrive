@@ -185,7 +185,9 @@ function getFloodWaitSeconds(err: unknown) {
 }
 
 function getDynamicUploadConcurrency() {
-  return { segments: 2 };
+  // Three independent chunks keep typical broadband uploads saturated while
+  // staying below the rate at which Telegram commonly starts flood-waiting.
+  return { segments: 3 };
 }
 
 /**
@@ -213,7 +215,7 @@ async function uploadChunk(
     fileName: chunkFileName,
     fileSize: fileToUpload.size,
     partSize: 512,
-    requestsPerConnection: 6,
+    requestsPerConnection: 8,
     progressCallback: (uploaded, total) => {
       onChunkProgress?.(uploaded, total);
     },

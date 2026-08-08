@@ -279,7 +279,9 @@ async function downloadMediaWithWorkers(
 ): Promise<Uint8Array> {
   const targetLocation = message?.media ?? message;
   const buffer = await client.downloadAsBuffer(targetLocation, {
-    partSize: options.partSizeKb || 1024,
+    // Telegram's maximum file part is 512 KB.  Requesting 1024 KB can be
+    // rejected or silently reduced by the DC, depending on the client build.
+    partSize: options.partSizeKb || 512,
     progressCallback: (dl, total) => {
       options.progressCallback?.(dl, total);
     },
@@ -294,9 +296,21 @@ export function mimeTypeFromName(fileName: string): string {
     if (ext === "svg") return "image/svg+xml";
     return `image/${ext}`;
   }
-  if (["mp4", "webm", "ogg", "mov"].includes(ext || "")) {
-    return ext === "mov" ? "video/quicktime" : `video/${ext}`;
-  }
+  const videoTypes: Record<string, string> = {
+    mp4: "video/mp4",
+    webm: "video/webm",
+    ogg: "video/ogg",
+    mov: "video/quicktime",
+    mkv: "video/x-matroska",
+    avi: "video/x-msvideo",
+    "3gp": "video/3gpp",
+    flv: "video/x-flv",
+    ts: "video/mp2t",
+    mts: "video/mp2t",
+    m2ts: "video/mp2t",
+    wmv: "video/x-ms-wmv",
+  };
+  if (ext && videoTypes[ext]) return videoTypes[ext];
   if (["mp3", "wav", "m4a", "flac", "ogg"].includes(ext || "")) {
     return `audio/${ext === "mp3" ? "mpeg" : ext}`;
   }
@@ -439,7 +453,9 @@ async function triggerBackgroundPrefetch(
       setCachedMessage(msgId, message);
     }
 
-    const PREFETCH_BYTES = 4 * 1024 * 1024; // 4 MB ahead
+    // Four megabytes is below a few seconds for high-bitrate 4K video. Keep
+    // a useful playback cushion without loading the whole Telegram document.
+    const PREFETCH_BYTES = 16 * 1024 * 1024;
     const cachedSoFar = getCachedBytes(fileId, chunkIndex);
     const fetchFrom = Math.max(startOffset, cachedSoFar);
     const fetchLimit = Math.min(PREFETCH_BYTES, fileChunkSize - fetchFrom);
@@ -452,7 +468,8 @@ async function triggerBackgroundPrefetch(
       }
       return;
     }
-    const activeClient = await getHelperClient(chunkIndex % 6);
+    // Keep prefetch off the connection currently feeding the media element.
+    const activeClient = await getHelperClient(1 + (chunkIndex % 5));
     const targetLocation = message?.media ?? message;
     const PART_ALIGN = 512 * 1024;
     const alignedOffset = Math.floor(fetchFrom / PART_ALIGN) * PART_ALIGN;
@@ -460,6 +477,8 @@ async function triggerBackgroundPrefetch(
     const iter = activeClient.downloadAsIterable(targetLocation, {
       offset: alignedOffset,
       partSize: 512,
+      limit: fetchLimit + (fetchFrom - alignedOffset),
+      abortSignal: abortCtrl.signal,
     });
 
     let writeOffset = alignedOffset;
@@ -724,9 +743,11 @@ export async function handleStreamRequest(
   });
 
   let aborted = false;
+  const streamAbortController = new AbortController();
   port.onmessage = (e) => {
     if (e.data?.type === "ABORT") {
       aborted = true;
+      streamAbortController.abort();
     }
   };
 
@@ -882,6 +903,10 @@ export async function handleStreamRequest(
         const iter = activeClient.downloadAsIterable(targetLocation, {
           offset: alignedOffset,
           partSize: 512,
+          // Do not ask Telegram for the entire 50–500 MB document when the
+          // browser only requested a media range.
+          limit: bytesNeeded + (resumeOffset - alignedOffset),
+          abortSignal: streamAbortController.signal,
         });
 
         let downloadPos = alignedOffset;
@@ -1279,6 +1304,61 @@ export async function listFilesInTopic(
             message: m,
           });
         }
+      }
+
+      // Recovery path for interrupted legacy uploads.  A failed final
+      // manifest used to leave valid `.part0000` documents hidden forever,
+      // which made a topic appear empty despite all file bytes being present.
+      // Only expose complete, contiguous groups so an incomplete upload never
+      // becomes a corrupt downloadable file.
+      const orphanPartGroups = new Map<string, {
+        partIndex: number;
+        message: any;
+        info: ReturnType<typeof getMessageDocumentInfo>;
+      }[]>();
+
+      for (const m of messageById.values()) {
+        if (processedMessageIds.has(m.id) || referencedChunkAndThumbIds.has(m.id)) continue;
+        const info = getMessageDocumentInfo(m);
+        const match = info.fileName?.match(/^(.*)\.part(\d+)$/i);
+        if (!match || !match[1]) continue;
+        const partIndex = Number(match[2]);
+        if (!Number.isSafeInteger(partIndex) || partIndex < 0) continue;
+        const group = orphanPartGroups.get(match[1]) || [];
+        group.push({ partIndex, message: m, info });
+        orphanPartGroups.set(match[1], group);
+      }
+
+      for (const [fileName, group] of orphanPartGroups) {
+        if (group.length < 2) continue;
+        group.sort((a, b) => a.partIndex - b.partIndex);
+        const firstPart = group[0].partIndex;
+        if (firstPart !== 0 && firstPart !== 1) continue;
+        if (group.some((part, index) => part.partIndex !== firstPart + index)) continue;
+
+        const totalSize = group.reduce((sum, part) => sum + (part.info.fileSize || 0), 0);
+        if (totalSize <= 0) continue;
+        const chunkSize = Math.max(...group.map((part) => part.info.fileSize || 0));
+        const first = group[0];
+        for (const part of group) processedMessageIds.add(part.message.id);
+
+        parsedFiles.push({
+          id: first.message.id,
+          name: fileName,
+          size: totalSize,
+          topicId,
+          manifest: {
+            type: "segmented_file",
+            fileName,
+            fileSize: totalSize,
+            chunks: group.map((part) => part.message.id),
+            ...(chunkSize > 0 ? { chunkSize } : {}),
+          },
+          date: Math.max(...group.map((part) => getMessageDateSeconds(part.message))),
+          mimeType: mimeTypeFromName(fileName),
+          chunkFileName: first.info.fileName,
+          message: first.message,
+        });
       }
       return parsedFiles;
     };

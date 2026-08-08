@@ -18,38 +18,51 @@ export function parseManifest(text: string): ChunkManifest | null {
   const tryParse = (jsonStr: string): ChunkManifest | null => {
     try {
       const data = JSON.parse(jsonStr);
+      // Older ClashDrive builds used a couple of spelling variants.  Keep
+      // these manifests readable: the chunk list is the only source of the
+      // original byte order, so it must never be re-sorted.
+      const fileName = data?.fileName ?? data?.file_name ?? data?.filename;
+      const rawFileSize = data?.fileSize ?? data?.file_size ?? data?.size;
+      const chunks = data?.chunks ?? data?.chunkIds ?? data?.chunk_ids ?? data?.parts;
+      const rawChunkSize = data?.chunkSize ?? data?.chunk_size;
+      const thumb = data?.thumb ?? data?.thumbnail;
+      const fileSize = typeof rawFileSize === "string" && /^\d+$/.test(rawFileSize)
+        ? Number(rawFileSize)
+        : rawFileSize;
+      const chunkSize = typeof rawChunkSize === "string" && /^\d+$/.test(rawChunkSize)
+        ? Number(rawChunkSize)
+        : rawChunkSize;
       if (
         data &&
         data.type === "segmented_file" &&
-        typeof data.fileName === "string" &&
-        data.fileName.length > 0 &&
-        data.fileName.length <= 255 &&
-        !isChunkOrThumbFileName(data.fileName) &&
-        typeof data.fileSize === "number" &&
-        data.fileSize >= 0 &&
-        data.fileSize <= 1024 * 1024 * 1024 * 500 && // 500 GB max
-        Array.isArray(data.chunks) &&
-        data.chunks.length > 0 &&
-        data.chunks.every(
+        typeof fileName === "string" &&
+        fileName.length > 0 &&
+        fileName.length <= 255 &&
+        !isChunkOrThumbFileName(fileName) &&
+        typeof fileSize === "number" &&
+        Number.isSafeInteger(fileSize) &&
+        fileSize >= 0 &&
+        fileSize <= 1024 * 1024 * 1024 * 500 && // 500 GB max
+        Array.isArray(chunks) &&
+        chunks.length > 0 &&
+        chunks.every(
           (id: unknown) =>
             (typeof id === "number" || (typeof id === "string" && /^\d+$/.test(id))) &&
             Number(id) > 0
         )
       ) {
-        const sortedChunks = data.chunks
-          .map((id: unknown) => Number(id))
-          .sort((a: number, b: number) => a - b);
+        const orderedChunks = chunks.map((id: unknown) => Number(id));
 
         const manifest: ChunkManifest = {
           type: "segmented_file",
-          fileName: data.fileName,
-          fileSize: data.fileSize,
-          chunks: sortedChunks,
-          ...(typeof data.chunkSize === "number" && data.chunkSize > 0
-            ? { chunkSize: data.chunkSize }
+          fileName,
+          fileSize,
+          chunks: orderedChunks,
+          ...(typeof chunkSize === "number" && chunkSize > 0
+            ? { chunkSize }
             : {}),
-          ...(typeof data.thumb === "number" || (typeof data.thumb === "string" && /^\d+$/.test(data.thumb))
-            ? { thumb: Number(data.thumb) }
+          ...(typeof thumb === "number" || (typeof thumb === "string" && /^\d+$/.test(thumb))
+            ? { thumb: Number(thumb) }
             : {}),
         };
         return manifest;
