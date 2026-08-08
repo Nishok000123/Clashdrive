@@ -112,6 +112,40 @@ async function verifyDriveGroup(
 }
 
 /**
+ * Ensure forum topics are enabled on a drive group.
+ */
+export async function ensureDriveForumEnabled(
+  client: TelegramClient,
+  config: DriveConfig
+): Promise<void> {
+  try {
+    const bareId = getBareChannelId(config.chatId);
+    let accessHashStr = config.accessHash || "0";
+    try {
+      const peer: any = await client.resolvePeer(Number(config.chatId));
+      if (peer?.accessHash) {
+        accessHashStr = String(peer.accessHash);
+      }
+    } catch { /* ignore */ }
+
+    const channelInput = {
+      _: "inputChannel" as const,
+      channelId: bareId,
+      accessHash: Long.fromString(accessHashStr),
+    };
+
+    await (client.call as any)({
+      _: "channels.toggleForum",
+      channel: channelInput,
+      enabled: true,
+      tabs: false,
+    });
+  } catch (e) {
+    console.warn("[radar] Failed to toggle forum on drive group:", e);
+  }
+}
+
+/**
  * Scan the user's dialogs looking for an existing drive group.
  *
  * Strategy (designed to minimize API calls and avoid FLOOD_WAIT):
@@ -362,7 +396,9 @@ export async function scanForDriveGroup(
     });
 
     const bestCandidate = scored[0];
-    const best = bestCandidate.config;
+    let best = bestCandidate.config;
+    best = await refreshDriveAccessHash(client, best);
+    await ensureDriveForumEnabled(client, best);
     console.log(`[radar] Selected drive: "${best.chatTitle}" (${best.chatId}) with ${bestCandidate.topicCount} topics`);
     if (!bestCandidate.hasSignature) {
       await stampDriveSignature(client, best.chatId, best.accessHash);

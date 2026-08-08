@@ -15,11 +15,17 @@ export async function getTopics(
   client: TelegramClient,
   config: DriveConfig
 ): Promise<TopicFolder[]> {
+  let resolvedPeer: any = null;
+  try {
+    resolvedPeer = await client.resolvePeer(Number(config.chatId));
+  } catch (peerErr) {
+    console.warn("[getTopics] Could not resolve peer:", peerErr);
+  }
+
   try {
     const topics: TopicFolder[] = [];
-    // getForumTopics fetches one page. The iterator follows Telegram's
-    // compound cursor, so drives with more than 100 folders are complete.
-    for await (const topic of client.iterForumTopics(Number(config.chatId))) {
+    const targetPeer = resolvedPeer || Number(config.chatId);
+    for await (const topic of client.iterForumTopics(targetPeer)) {
       topics.push({
         id: topic.id,
         title: topic.title,
@@ -35,11 +41,14 @@ export async function getTopics(
 
   try {
     const bareId = getBareChannelId(config.chatId);
-    const channelInput = {
-      _: "inputPeerChannel" as const,
-      channelId: bareId,
-      accessHash: Long.fromString(config.accessHash || "0"),
-    };
+    const channelInput =
+      resolvedPeer && resolvedPeer._ === "inputPeerChannel"
+        ? resolvedPeer
+        : {
+            _: "inputPeerChannel" as const,
+            channelId: bareId,
+            accessHash: Long.fromString(config.accessHash || "0"),
+          };
 
     const allTopics: TopicFolder[] = [];
     let offsetTopic = 0;
@@ -122,8 +131,9 @@ export async function createTopic(
   title: string
 ): Promise<TopicFolder | null> {
   try {
+    const peer = (await client.resolvePeer(Number(config.chatId)).catch(() => null)) || Number(config.chatId);
     const msg = await client.createForumTopic({
-      chatId: Number(config.chatId),
+      chatId: peer as any,
       title,
     });
     return {
@@ -146,8 +156,9 @@ export async function renameTopic(
   title: string
 ): Promise<boolean> {
   try {
+    const peer = (await client.resolvePeer(Number(config.chatId)).catch(() => null)) || Number(config.chatId);
     await client.editForumTopic({
-      chatId: Number(config.chatId),
+      chatId: peer as any,
       topicId,
       title,
     });
@@ -167,7 +178,8 @@ export async function deleteTopic(
   topicId: number
 ): Promise<boolean> {
   try {
-    await client.deleteForumTopicHistory(Number(config.chatId), topicId);
+    const peer = (await client.resolvePeer(Number(config.chatId)).catch(() => null)) || Number(config.chatId);
+    await client.deleteForumTopicHistory(peer as any, topicId);
     return true;
   } catch (err) {
     console.error("Failed to delete topic:", err);

@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import type { TelegramClient } from "@mtcute/web";
-import { scanForDriveGroup, createDriveGroup } from "../lib/radar";
+import { scanForDriveGroup, createDriveGroup, ensureDriveForumEnabled } from "../lib/radar";
 import { getTopics, createTopic, deleteTopic, renameTopic } from "../lib/topics";
 import { ensureConnected } from "../lib/client";
 import type { DriveConfig, TopicFolder } from "../types";
@@ -30,6 +30,7 @@ export function useDrive() {
       setDriveConfig(config);
       setSyncStatus("Loading folders...");
 
+      await ensureDriveForumEnabled(client, config);
       let folders = await getTopics(client, config);
 
       const defaultTitles = ["Videos", "Audio", "Photos", "Documents", "Favourite"];
