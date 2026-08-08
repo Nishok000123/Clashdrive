@@ -203,7 +203,7 @@ export async function scanForDriveGroup(
   }
 
   // --- Step 3: Filter candidates (title keywords OR forum supergroups) ---
-  const TITLE_KEYWORDS = ["clash drive", "tg cloud drive", "clashdrive", "tg cloud", "drive", "clash", "cloud", "storage", "vault"];
+  const TITLE_KEYWORDS = ["clashchat", "clash chat", "clash drive", "tg cloud drive", "clashdrive", "tg cloud", "drive", "clash", "cloud", "storage", "vault"];
   const titleCandidates: any[] = [];
 
   for (const dialog of dialogs) {
@@ -223,7 +223,7 @@ export async function scanForDriveGroup(
     const titleLower = (chat.title || "").toLowerCase();
     // Exclude update / announcement channel names unless exact match
     if (titleLower.includes("clashgram") || titleLower.includes("update channel")) {
-      if (!titleLower.includes("drive")) continue;
+      if (!titleLower.includes("drive") && !titleLower.includes("chat")) continue;
     }
 
     const isTitleMatch = TITLE_KEYWORDS.some((kw) => titleLower.includes(kw));
@@ -360,19 +360,19 @@ export async function scanForDriveGroup(
       // Calculate composite score
       let score = 0;
       const titleLower = (chat.title || "").toLowerCase();
-      if (titleLower === "clash drive" || titleLower === "tg cloud drive") {
-        score += 2000;
-      } else if (titleLower.includes("clash drive") || titleLower.includes("tg cloud drive")) {
-        score += 1000;
+      if (titleLower === "clashchat" || titleLower === "clash chat" || titleLower === "clash drive" || titleLower === "tg cloud drive") {
+        score += 3000;
+      } else if (titleLower.includes("clashchat") || titleLower.includes("clash chat") || titleLower.includes("clash drive") || titleLower.includes("tg cloud drive")) {
+        score += 1500;
       } else if (titleLower.includes("clashdrive") || titleLower.includes("tg cloud")) {
-        score += 500;
-      } else if (titleLower.includes("drive") || titleLower.includes("cloud") || titleLower.includes("vault")) {
-        score += 200;
+        score += 800;
+      } else if (titleLower.includes("clash") || titleLower.includes("drive") || titleLower.includes("cloud") || titleLower.includes("vault")) {
+        score += 300;
       }
 
-      if (hasSignature) score += 1000;
-      if (manifestCount > 0) score += (manifestCount * 100);
-      if (topicCount > 0) score += (topicCount * 50);
+      if (hasSignature) score += 5000;
+      if (manifestCount > 0) score += 3000 + (manifestCount * 200);
+      if (topicCount > 0) score += 1000 + (topicCount * 50);
 
       const markedId = getMarkedChannelId(chat.id);
       const bareId = getBareChannelId(chat.id);
