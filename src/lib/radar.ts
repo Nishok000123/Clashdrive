@@ -360,13 +360,12 @@ export async function scanForDriveGroup(
       // Calculate composite score with multi-parameter weighting
       let score = 0;
       const titleLower = (chat.title || "").toLowerCase();
-      const titleClean = titleLower.replace(/[^a-z0-9]/g, "");
 
-      if (titleClean === "tgclouddrive" || titleClean === "clashdrive") {
+      if (titleLower === "clash drive" || titleLower === "tg cloud drive") {
         score += 10000;
-      } else if (titleLower.includes("tg cloud drive") || titleLower.includes("clash drive")) {
+      } else if (titleLower.includes("clash drive") || titleLower.includes("tg cloud drive")) {
         score += 6000;
-      } else if (titleLower.includes("tg cloud") || titleLower.includes("clashdrive") || titleLower.includes("clashchat")) {
+      } else if (titleLower.includes("tg cloud") || titleLower.includes("clashdrive")) {
         score += 3000;
       } else if (titleLower.includes("drive") || titleLower.includes("cloud") || titleLower.includes("vault") || titleLower.includes("clash")) {
         score += 500;
