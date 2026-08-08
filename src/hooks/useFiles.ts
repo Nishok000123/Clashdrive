@@ -348,6 +348,14 @@ export function useFiles() {
       const ok = await deleteDriveFile(client, config, file);
       if (!ok) return false;
       fileCache.current.delete(file.topicId);
+      const sourceDbFiles = await loadTopicFilesFromDB(file.topicId);
+      if (sourceDbFiles) {
+        const updatedSource = sourceDbFiles.filter((item) => item.id !== file.id);
+        await saveTopicFilesToDB(file.topicId, updatedSource);
+        fileCache.current.set(file.topicId, updatedSource);
+      } else {
+        await deleteTopicFilesFromDB(file.topicId);
+      }
       setFiles((prev) => prev.filter((item) => item.id !== file.id));
       return true;
     },
@@ -380,6 +388,11 @@ export function useFiles() {
           file.topicId,
           cached.map((item) => (item.id === file.id ? renamed : item))
         );
+      }
+      const sourceDbFiles = await loadTopicFilesFromDB(file.topicId);
+      if (sourceDbFiles) {
+        const updatedSource = sourceDbFiles.map((item) => (item.id === file.id ? renamed : item));
+        await saveTopicFilesToDB(file.topicId, updatedSource);
       }
       return true;
     },
@@ -498,6 +511,24 @@ export function useFiles() {
       fileCache.current.delete(file.topicId);
       fileCache.current.delete(targetFolderId);
 
+      const sourceDbFiles = await loadTopicFilesFromDB(file.topicId);
+      if (sourceDbFiles) {
+        const updatedSource = sourceDbFiles.filter((f) => f.id !== file.id);
+        await saveTopicFilesToDB(file.topicId, updatedSource);
+        fileCache.current.set(file.topicId, updatedSource);
+      } else {
+        await deleteTopicFilesFromDB(file.topicId);
+      }
+
+      const targetDbFiles = await loadTopicFilesFromDB(targetFolderId);
+      if (targetDbFiles) {
+        const updatedTarget = [movedFile, ...targetDbFiles.filter((f) => f.id !== movedFile.id)];
+        await saveTopicFilesToDB(targetFolderId, updatedTarget);
+        fileCache.current.set(targetFolderId, updatedTarget);
+      } else {
+        await deleteTopicFilesFromDB(targetFolderId);
+      }
+
       setFiles((prev) =>
         prev
           .map((f) => (f.id === file.id ? movedFile : f))
@@ -546,6 +577,15 @@ export function useFiles() {
       };
 
       fileCache.current.delete(targetFolderId);
+
+      const targetDbFiles = await loadTopicFilesFromDB(targetFolderId);
+      if (targetDbFiles) {
+        const updatedTarget = [copiedFile, ...targetDbFiles.filter((f) => f.id !== copiedFile.id)];
+        await saveTopicFilesToDB(targetFolderId, updatedTarget);
+        fileCache.current.set(targetFolderId, updatedTarget);
+      } else {
+        await deleteTopicFilesFromDB(targetFolderId);
+      }
 
       setFiles((prev) => [copiedFile, ...prev]);
 
@@ -711,12 +751,21 @@ export function useFiles() {
         }
       }
 
-      topicIds.forEach((topicId) => {
+      const toDeleteIds = new Set(filesToDelete.map((f) => f.id));
+
+      for (const topicId of topicIds) {
         fileCache.current.delete(topicId);
-      });
+        const sourceDbFiles = await loadTopicFilesFromDB(topicId);
+        if (sourceDbFiles) {
+          const updatedSource = sourceDbFiles.filter((item) => !toDeleteIds.has(item.id));
+          await saveTopicFilesToDB(topicId, updatedSource);
+          fileCache.current.set(topicId, updatedSource);
+        } else {
+          await deleteTopicFilesFromDB(topicId);
+        }
+      }
 
       setFiles((prev) => {
-        const toDeleteIds = new Set(filesToDelete.map((f) => f.id));
         return prev.filter((item) => !toDeleteIds.has(item.id));
       });
 

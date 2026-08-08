@@ -133,23 +133,23 @@ export function UploadZone({ onDrop, disabled, onImportShareHash }: UploadZonePr
         <form
           onSubmit={handleImportSubmit}
           onClick={(e) => e.stopPropagation()}
-          className="p-2.5 sm:p-3.5 rounded-[16px] bg-md-surface-container border border-md-outline-variant/30 flex items-center gap-2 select-none overflow-hidden"
+          className="p-2 sm:p-3 rounded-[16px] bg-md-surface-container border border-md-outline-variant/30 flex items-center gap-2 select-none overflow-hidden"
         >
           <div className="flex items-center gap-1.5 pl-1 shrink-0">
             <span className="text-sm">🔑</span>
-            <span className="text-xs font-semibold text-md-on-surface hidden sm:inline">Import Share Token:</span>
+            <span className="text-xs font-semibold text-md-on-surface hidden xs:inline">Import Share Token:</span>
           </div>
           <input
             type="text"
             value={shareHashInput}
             onChange={(e) => setShareHashInput(e.target.value)}
             placeholder="Paste share token..."
-            className="flex-1 min-w-0 px-2.5 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-md-surface-container-lowest border border-md-outline-variant text-xs font-mono text-md-on-surface placeholder:text-md-outline focus:outline-none focus:border-md-primary"
+            className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-md-surface-container-lowest border border-md-outline-variant text-xs font-mono text-md-on-surface placeholder:text-md-outline focus:outline-none focus:border-md-primary"
           />
           <button
             type="submit"
             disabled={!shareHashInput.trim()}
-            className="px-3 sm:px-4 py-2 sm:py-2.5 rounded-[20px] bg-md-primary hover:brightness-95 text-md-on-primary text-xs font-semibold whitespace-nowrap transition-all active:scale-95 disabled:opacity-40 cursor-pointer shrink-0"
+            className="px-3.5 sm:px-4 py-2 rounded-[14px] bg-md-primary hover:brightness-95 text-md-on-primary text-xs font-semibold whitespace-nowrap transition-all active:scale-95 disabled:opacity-40 cursor-pointer shrink-0"
           >
             Import File
           </button>

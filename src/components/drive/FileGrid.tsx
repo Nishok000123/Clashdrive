@@ -192,7 +192,7 @@ export function FileGrid({
         </div>
         {selectedFileIds.size > 0 && (
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-md-primary bg-md-primary-container px-2.5 py-1 rounded-full">
+            <span className="text-xs font-semibold text-md-primary bg-md-primary-container px-2.5 py-1 rounded-full whitespace-nowrap shrink-0">
               {selectedFileIds.size} selected
             </span>
             {onOpenMoveCopy && (
@@ -201,7 +201,7 @@ export function FileGrid({
                   const selectedFiles = files.filter((f) => selectedFileIds.has(f.id));
                   if (selectedFiles.length > 0) onOpenMoveCopy(selectedFiles);
                 }}
-                className="py-1 px-3 rounded-full bg-md-primary-container hover:brightness-95 text-md-on-primary-container text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+                className="py-1 px-3 rounded-full bg-md-primary-container hover:brightness-95 text-md-on-primary-container text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 whitespace-nowrap shrink-0"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />

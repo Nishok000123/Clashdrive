@@ -1234,7 +1234,7 @@ export async function listFilesInTopic(
 
     if (!isGeneralTopic) {
       try {
-        for (const message of await getReplyMessages(client, peer, topicId, minId)) {
+        for (const message of await getReplyMessages(client, peer, topicId, 0)) {
           messageById.set(message.id, message);
         }
       } catch (error) {
@@ -1245,11 +1245,6 @@ export async function listFilesInTopic(
         if (getFloodWaitSeconds(error) !== null) throw error;
         console.warn(`[listFilesInTopic] getReplies failed for topic ${topicId}; scanning history.`, error);
       }
-    }
-
-    // Fast path: if incremental sync returned no new messages, return cached files immediately!
-    if (minId > 0 && messageById.size === 0 && !isGeneralTopic) {
-      return Array.from(existingFileMap.values());
     }
 
     const getMessageText = (m: any): string => {
@@ -1422,21 +1417,11 @@ export async function listFilesInTopic(
 
     // Fallback: scan every history page and keep only this topic.
     if (files.length === 0 && messageById.size === 0) {
-      if (minId > 0 && existingFileMap.size > 0) {
-        return Array.from(existingFileMap.values());
-      }
-      for (const message of await getTopicMessagesFromHistory(client, peer, topicId, minId)) {
+      for (const message of await getTopicMessagesFromHistory(client, peer, topicId, 0)) {
         messageById.set(message.id, message);
       }
 
       files = await extractFilesFromMap();
-    }
-
-    if (minId > 0 && existingFileMap.size > 0) {
-      for (const f of files) {
-        existingFileMap.set(f.id, f);
-      }
-      return Array.from(existingFileMap.values());
     }
 
     return files;
