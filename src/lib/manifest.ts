@@ -13,35 +13,64 @@ export function isChunkOrThumbFileName(fileName?: string): boolean {
  * Returns null if the message text isn't a valid segmented_file JSON payload.
  */
 export function parseManifest(text: string): ChunkManifest | null {
-  try {
-    const data = JSON.parse(text);
-    if (
-      data &&
-      data.type === "segmented_file" &&
-      typeof data.fileName === "string" &&
-      data.fileName.length > 0 &&
-      data.fileName.length <= 255 &&
-      !isChunkOrThumbFileName(data.fileName) &&
-      typeof data.fileSize === "number" &&
-      data.fileSize >= 0 &&
-      data.fileSize <= 1024 * 1024 * 1024 * 50 && // 50 GB max
-      Array.isArray(data.chunks) &&
-      data.chunks.length > 0 &&
-      data.chunks.every((id: unknown) => typeof id === "number" && id > 0)
-    ) {
-      const manifest: ChunkManifest = {
-        type: "segmented_file",
-        fileName: data.fileName,
-        fileSize: data.fileSize,
-        chunks: data.chunks,
-        ...(typeof data.chunkSize === "number" && data.chunkSize > 0 ? { chunkSize: data.chunkSize } : {}),
-        ...(typeof data.thumb === "number" ? { thumb: data.thumb } : {}),
-      };
-      return manifest;
+  if (!text) return null;
+
+  const tryParse = (jsonStr: string): ChunkManifest | null => {
+    try {
+      const data = JSON.parse(jsonStr);
+      if (
+        data &&
+        data.type === "segmented_file" &&
+        typeof data.fileName === "string" &&
+        data.fileName.length > 0 &&
+        data.fileName.length <= 255 &&
+        !isChunkOrThumbFileName(data.fileName) &&
+        typeof data.fileSize === "number" &&
+        data.fileSize >= 0 &&
+        data.fileSize <= 1024 * 1024 * 1024 * 500 && // 500 GB max
+        Array.isArray(data.chunks) &&
+        data.chunks.length > 0 &&
+        data.chunks.every(
+          (id: unknown) =>
+            (typeof id === "number" || (typeof id === "string" && /^\d+$/.test(id))) &&
+            Number(id) > 0
+        )
+      ) {
+        const sortedChunks = data.chunks
+          .map((id: unknown) => Number(id))
+          .sort((a: number, b: number) => a - b);
+
+        const manifest: ChunkManifest = {
+          type: "segmented_file",
+          fileName: data.fileName,
+          fileSize: data.fileSize,
+          chunks: sortedChunks,
+          ...(typeof data.chunkSize === "number" && data.chunkSize > 0
+            ? { chunkSize: data.chunkSize }
+            : {}),
+          ...(typeof data.thumb === "number" || (typeof data.thumb === "string" && /^\d+$/.test(data.thumb))
+            ? { thumb: Number(data.thumb) }
+            : {}),
+        };
+        return manifest;
+      }
+    } catch {
+      return null;
     }
-  } catch {
-    // Not JSON — regular message or a raw chunk, skip it
+    return null;
+  };
+
+  const trimmed = text.trim();
+  const direct = tryParse(trimmed);
+  if (direct) return direct;
+
+  // Extract JSON object containing "segmented_file" if embedded in markdown/code blocks/captions
+  const match = trimmed.match(/\{[\s\S]*?"type"\s*:\s*"segmented_file"[\s\S]*?\}/);
+  if (match) {
+    const extracted = tryParse(match[0]);
+    if (extracted) return extracted;
   }
+
   return null;
 }
 

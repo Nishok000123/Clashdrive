@@ -1168,6 +1168,17 @@ export async function listFilesInTopic(
       }
     }
 
+    const getMessageText = (m: any): string => {
+      if (!m) return "";
+      if (typeof m.message === "string" && m.message) return m.message;
+      if (typeof m.text === "string" && m.text) return m.text;
+      if (typeof m.caption === "string" && m.caption) return m.caption;
+      if (typeof m.raw?.message === "string" && m.raw.message) return m.raw.message;
+      if (typeof m.raw?.text === "string" && m.raw.text) return m.raw.text;
+      if (typeof m.raw?.caption === "string" && m.raw.caption) return m.raw.caption;
+      return "";
+    };
+
     const extractFilesFromMap = async (): Promise<DriveFile[]> => {
       const parsedFiles: DriveFile[] = [];
       const manifestItems: { msg: any; manifest: ChunkManifest }[] = [];
@@ -1175,7 +1186,7 @@ export async function listFilesInTopic(
       const missingChunkIds: number[] = [];
 
       for (const m of messageById.values()) {
-        const text = typeof m.message === "string" ? m.message : typeof m.text === "string" ? m.text : "";
+        const text = getMessageText(m);
         if (!text) continue;
         const manifest = parseManifest(text);
         if (manifest && !isChunkOrThumbFileName(manifest.fileName)) {
