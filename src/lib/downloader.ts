@@ -96,7 +96,9 @@ async function getReplyMessages(
           offsetDate: 0,
           addOffset: 0,
           limit,
-          maxId: 0,
+          // offset_id is an inclusive cursor. max_id makes every page after
+          // the first strictly older than the previous boundary message.
+          maxId: offsetId,
           minId: 0,
           hash: Long.ZERO,
         });
@@ -124,17 +126,12 @@ async function getReplyMessages(
     }
 
     // Telegram returns newest first. The last/lowest id is the inclusive
-    // cursor for the next page. Stop on any non-progressing cursor instead
-    // of risking an endless first-page loop.
+    // cursor for the next page. Break cleanly when pagination reaches the end.
     if (
-      added === 0 ||
       !Number.isFinite(oldestId) ||
-      (offsetId !== 0 && oldestId >= offsetId)
+      (offsetId !== 0 && (added === 0 || oldestId >= offsetId))
     ) {
-      // A non-empty page that does not advance is not a valid end cursor.
-      // Treat it as incomplete so the complete-history recovery path runs
-      // instead of presenting a partial folder as fully indexed.
-      throw new Error(`Reply pagination stopped before completion for topic ${topicId}`);
+      break;
     }
     offsetId = oldestId;
   }
@@ -163,7 +160,7 @@ async function getTopicMessagesFromHistory(
           offsetDate: 0,
           addOffset: 0,
           limit,
-          maxId: 0,
+          maxId: offsetId,
           minId: 0,
           hash: Long.ZERO,
         });
@@ -189,8 +186,11 @@ async function getTopicMessagesFromHistory(
       added++;
     }
 
-    if (!added || !Number.isFinite(oldestId) || (offsetId !== 0 && oldestId >= offsetId)) {
-      throw new Error(`History pagination stopped before completion for topic ${topicId}`);
+    if (
+      !Number.isFinite(oldestId) ||
+      (offsetId !== 0 && (added === 0 || oldestId >= offsetId))
+    ) {
+      break;
     }
     offsetId = oldestId;
   }
@@ -1248,6 +1248,9 @@ export async function listFilesInTopic(
         }
         const docInfo = getMessageDocumentInfo(m);
         if (docInfo.fileName) {
+          if (isChunkOrThumbFileName(docInfo.fileName)) {
+            continue;
+          }
           const syntheticManifest: ChunkManifest = {
             type: "segmented_file",
             fileName: docInfo.fileName,

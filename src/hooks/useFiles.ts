@@ -5,6 +5,7 @@ import { uploadFile as uploadFileLib, getUploadChunkSize } from "../lib/uploader
 import { deleteDriveFile, downloadFile as downloadFileLib, normalizeRenamedFileName, renameDriveFile } from "../lib/downloader";
 import { ensureConnected } from "../lib/client";
 import type { DriveFile, UploadProgress, DriveConfig, DownloadProgress } from "../types";
+import { loadTopicFilesFromDB, saveTopicFilesToDB, deleteTopicFilesFromDB } from "../lib/db";
 
 async function runWithConcurrency<T>(
   tasks: (() => Promise<T>)[],
@@ -60,9 +61,19 @@ export function useFiles() {
 
       setLoadingFiles(true);
       try {
+        if (!force) {
+          const cached = await loadTopicFilesFromDB(topicId);
+          if (cached && cached.length > 0) {
+            fileCache.current.set(topicId, cached);
+            setFiles(cached);
+            setLoadingFiles(false);
+            return;
+          }
+        }
         await ensureConnected();
         const result = await listFilesInTopic(client, config, topicId);
         fileCache.current.set(topicId, result);
+        void saveTopicFilesToDB(topicId, result);
         setFiles(result);
       } finally {
         setLoadingFiles(false);
@@ -594,29 +605,49 @@ export function useFiles() {
       setIndexing(true);
       setIndexingProgress({ current: 0, total: folders.length });
 
-      let count = 0;
       for (const folder of folders) {
-        let attempts = 0;
-        while (!fileCache.current.has(folder.id)) {
-          try {
-            await ensureConnected();
-            const result = await listFilesInTopic(client, config, folder.id);
-            fileCache.current.set(folder.id, result);
-          } catch (err) {
-            attempts++;
-            // Never mark a failed folder as indexed. Telegram may return a
-            // temporary RPC/network error after hours of large-drive scans.
-            const retryMs = Math.min(60_000, 1_000 * 2 ** Math.min(attempts, 6));
-            console.error(
-              `Failed to index folder ${folder.title}; retrying in ${Math.ceil(retryMs / 1000)}s (attempt ${attempts}).`,
-              err
-            );
-            await new Promise((resolve) => setTimeout(resolve, retryMs));
+        if (!fileCache.current.has(folder.id)) {
+          const dbFiles = await loadTopicFilesFromDB(folder.id);
+          if (dbFiles) {
+            fileCache.current.set(folder.id, dbFiles);
           }
         }
-        count++;
-        setIndexingProgress({ current: count, total: folders.length });
-        await new Promise((r) => setTimeout(r, 100));
+      }
+
+      const pending = folders.filter((folder) => !fileCache.current.has(folder.id));
+      const attempts = new Map<number, number>();
+      let completed = folders.length - pending.length;
+      setIndexingProgress({ current: completed, total: folders.length });
+
+      while (pending.length > 0) {
+        const folder = pending.shift()!;
+        try {
+          await ensureConnected();
+          const result = await listFilesInTopic(client, config, folder.id);
+          fileCache.current.set(folder.id, result);
+          void saveTopicFilesToDB(folder.id, result);
+          completed++;
+          setIndexingProgress({ current: completed, total: folders.length });
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        } catch (err) {
+          const attempt = (attempts.get(folder.id) || 0) + 1;
+          attempts.set(folder.id, attempt);
+          if (attempt <= 5) {
+            pending.push(folder);
+          } else {
+            console.error(`Skipping folder ${folder.title} after 5 failed attempts:`, err);
+            completed++;
+            setIndexingProgress({ current: completed, total: folders.length });
+            continue;
+          }
+
+          const retryMs = Math.min(30_000, 1_000 * 2 ** Math.min(attempt, 5));
+          console.error(
+            `Failed to index folder ${folder.title}; retrying in ${Math.ceil(retryMs / 1000)}s (attempt ${attempt}).`,
+            err
+          );
+          await new Promise((resolve) => setTimeout(resolve, retryMs));
+        }
       }
       setIndexing(false);
       indexingRef.current = false;

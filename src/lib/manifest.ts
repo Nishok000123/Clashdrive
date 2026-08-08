@@ -3,7 +3,7 @@ import type { ChunkManifest } from "../types";
 export function isChunkOrThumbFileName(fileName?: string): boolean {
   if (!fileName) return false;
   const name = fileName.toLowerCase();
-  if (/\.part\d+$/i.test(name)) return true;
+  if (/(^|\.)part\d*$/i.test(name)) return true;
   if (/\.thumb\.(jpg|jpeg|png|webp|gif)$/i.test(name)) return true;
   return false;
 }
