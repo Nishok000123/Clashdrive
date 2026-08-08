@@ -306,7 +306,7 @@ export function mimeTypeFromName(fileName: string): string {
     webm: "video/webm",
     ogg: "video/ogg",
     mov: "video/quicktime",
-    mkv: "video/x-matroska",
+    mkv: "video/webm",
     avi: "video/x-msvideo",
     "3gp": "video/3gpp",
     flv: "video/x-flv",

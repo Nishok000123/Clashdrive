@@ -251,6 +251,7 @@ export function PreviewModal({
   const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [seekTooltip, setSeekTooltip] = useState<{ x: number; time: string } | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
 
   // ─── Audio state ───
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -1539,29 +1540,55 @@ export function PreviewModal({
                     }
                   }}
                 >
-                  <video
-                    ref={videoRef}
-                    src={url}
-                    autoPlay
-                    playsInline
-                    preload="auto"
-                    onPlay={() => { setVideoPlaying(true); resetControlsTimer(); setBuffering(false); }}
-                    onPause={() => { setVideoPlaying(false); setControlsVisible(true); }}
-                    onTimeUpdate={onVideoTimeUpdate}
-                    onLoadedMetadata={() => { if (videoRef.current) setVideoDuration(videoRef.current.duration); setBuffering(false); }}
-                    onLoadedData={() => setBuffering(false)}
-                    onCanPlay={() => setBuffering(false)}
-                    onCanPlayThrough={() => setBuffering(false)}
-                    onSeeking={() => setBuffering(true)}
-                    onSeeked={() => setBuffering(false)}
-                    onWaiting={() => setBuffering(true)}
-                    onPlaying={() => setBuffering(false)}
-                    onError={(e) => {
-                      console.error("Video element playback error:", e);
-                      setBuffering(false);
-                    }}
-                    className="max-w-full max-h-full object-contain"
-                  />
+                  {videoError ? (
+                    <div className="flex flex-col items-center justify-center text-center p-8 max-w-md bg-white/[0.04] backdrop-blur-2xl rounded-3xl border border-white/10 shadow-2xl animate-spring-in">
+                      <div className="w-16 h-16 rounded-2xl bg-purple-500/20 text-purple-400 flex items-center justify-center mb-4 border border-purple-500/30 shadow-lg">
+                        <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      </div>
+                      <h3 className="text-lg font-bold text-white mb-1">Cannot Play .{ext.toUpperCase()} Inline</h3>
+                      <p className="text-xs text-white/60 mb-6 leading-relaxed">
+                        {videoError}
+                      </p>
+                      {onDownload && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onDownload(); }}
+                          className="px-5 py-2.5 rounded-xl bg-brand-500 hover:bg-brand-400 text-white font-medium text-sm flex items-center gap-2 transition-all shadow-lg cursor-pointer active:scale-95"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                          Download Video ({formatBytes(file.size)})
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <video
+                        ref={videoRef}
+                        src={url || undefined}
+                        autoPlay
+                        playsInline
+                        preload="auto"
+                        onPlay={() => { setVideoPlaying(true); resetControlsTimer(); setBuffering(false); }}
+                        onPause={() => { setVideoPlaying(false); setControlsVisible(true); }}
+                        onTimeUpdate={onVideoTimeUpdate}
+                        onLoadedMetadata={() => { if (videoRef.current) setVideoDuration(videoRef.current.duration); setBuffering(false); }}
+                        onLoadedData={() => setBuffering(false)}
+                        onCanPlay={() => setBuffering(false)}
+                        onCanPlayThrough={() => setBuffering(false)}
+                        onSeeking={() => setBuffering(true)}
+                        onSeeked={() => setBuffering(false)}
+                        onWaiting={() => setBuffering(true)}
+                        onPlaying={() => setBuffering(false)}
+                        onError={(e) => {
+                          console.warn("Video element playback error:", e);
+                          setBuffering(false);
+                          setVideoError(`Browser native player cannot render this video codec/container (.${ext.toUpperCase()}). Please download to play.`);
+                        }}
+                        className="max-w-full max-h-full object-contain"
+                      />
 
                   {/* Big center play/pause button */}
                   {!videoPlaying && !buffering && (
@@ -1703,8 +1730,10 @@ export function PreviewModal({
                       </button>
                     </div>
                   </div>
-                </div>
+                </>
               )}
+            </div>
+          )}
 
               {/* ══════════════════════════════════════════
                   AUDIO PLAYER — PREMIUM
