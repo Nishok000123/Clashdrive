@@ -649,7 +649,13 @@ export function useFiles() {
             continue;
           }
 
-          const retryMs = Math.min(30_000, 1_000 * 2 ** Math.min(attempt, 5));
+          const errorText = err instanceof Error ? err.message : String(err);
+          const floodMatch = errorText.match(/FLOOD_WAIT_(\d+)/);
+          // Telegram provides the precise cooldown. Retrying early creates a
+          // new flood wait and prevents the folder from ever finishing.
+          const retryMs = floodMatch
+            ? (Number(floodMatch[1]) + 1) * 1_000
+            : Math.min(30_000, 1_000 * 2 ** Math.min(attempt, 5));
           console.error(
             `Failed to index folder ${folder.title}; retrying in ${Math.ceil(retryMs / 1000)}s (attempt ${attempt}).`,
             err

@@ -39,10 +39,15 @@ function getErrorMessage(err: unknown) {
 }
 
 function getFloodWaitSeconds(err: unknown) {
-  if (typeof err !== "object" || !err || !("errorMessage" in err)) return null;
-  const errorMessage = (err as { errorMessage?: unknown }).errorMessage;
-  if (typeof errorMessage !== "string" || !errorMessage.startsWith("FLOOD_WAIT_")) return null;
-  return parseInt(errorMessage.split("_").pop() || "", 10) || 30;
+  if (typeof err !== "object" || !err) return null;
+  const candidate = err as { errorMessage?: unknown; message?: unknown };
+  const text = typeof candidate.errorMessage === "string"
+    ? candidate.errorMessage
+    : typeof candidate.message === "string"
+      ? candidate.message
+      : "";
+  const match = text.match(/FLOOD_WAIT_(\d+)/);
+  return match ? parseInt(match[1], 10) || 30 : null;
 }
 
 /** Normalise raw Telegram seconds and mtcute's Date wrapper to Unix seconds. */
@@ -903,6 +908,7 @@ export async function handleStreamRequest(
     const PART_ALIGN = 512 * 1024; // 512 KB Telegram-aligned
 
     while (attempts < MAX_ATTEMPTS && bytesSent < bytesNeeded && !aborted) {
+      let rangeCompleted = false;
       try {
         const activeClient = await getHelperClient(chunkIndex % 6);
         const targetLocation = message?.media ?? message;
@@ -952,6 +958,7 @@ export async function handleStreamRequest(
 
             downloadPos += piece.length;
             if (bytesSent >= bytesNeeded) {
+              rangeCompleted = true;
               rangeAbortController.abort();
               break;
             }
@@ -963,6 +970,11 @@ export async function handleStreamRequest(
 
         if (bytesSent >= bytesNeeded || aborted) break;
       } catch (err) {
+        // The abort used to stop mtcute's background workers happens after
+        // the requested bytes were delivered. It is successful completion.
+        if (rangeCompleted || aborted || (err as { name?: string })?.name === "AbortError") {
+          break;
+        }
         const wait = getFloodWaitSeconds(err);
         if (wait !== null) {
           console.warn(`[STREAM] FloodWait: sleeping ${wait}s then retrying chunk ${chunkIndex}`);
@@ -1208,6 +1220,9 @@ export async function listFilesInTopic(
       } catch (error) {
         // The complete-history scan below is intentionally retained as a
         // compatibility path for migrated/legacy forum topics.
+        // A rate limit is transient; falling through to getHistory doubles
+        // request pressure and makes the flood wait worse.
+        if (getFloodWaitSeconds(error) !== null) throw error;
         console.warn(`[listFilesInTopic] getReplies failed for topic ${topicId}; scanning history.`, error);
       }
     }
