@@ -446,7 +446,7 @@ export async function scanForDriveGroup(
         score += 6000;
       } else if (titleLower.includes("tg cloud") || titleLower.includes("clashdrive")) {
         score += 3000;
-      } else if (titleLower.includes("drive") || titleLower.includes("cloud") || titleLower.includes("vault") || titleLower.includes("clash")) {
+      } else if (titleLower.includes("drive") || titleLower.includes("cloud") || titleLower.includes("vault")) {
         score += 500;
       }
 
