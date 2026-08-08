@@ -243,23 +243,11 @@ async function uploadChunk(
 }
 
 /**
- * Calculate dynamic upload chunk size based on total file size:
- * - Under 1 GB: 50 MB
- * - 1 GB to < 3 GB: 100 MB
- * - 3 GB to < 5 GB: 150 MB
- * - Increases by 50 MB for every 2 GB step above 1 GB
- * - Maximum chunk size cap: 500 MB
+ * Default upload chunk size: 500 MB (524,288,000 bytes) for all files.
  */
-export function getUploadChunkSize(fileSize: number): number {
+export function getUploadChunkSize(_fileSize?: number): number {
   const MB = 1024 * 1024;
-  const GB = 1024 * 1024 * 1024;
-
-  if (fileSize < 1 * GB) {
-    return 50 * MB;
-  }
-  const tier = Math.floor((fileSize - 1 * GB) / (2 * GB));
-  const sizeInMB = Math.min(500, 100 + tier * 50);
-  return sizeInMB * MB;
+  return 500 * MB;
 }
 
 /**
