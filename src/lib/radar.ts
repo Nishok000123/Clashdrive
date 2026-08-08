@@ -65,12 +65,40 @@ async function stampDriveSignature(
   }
 }
 
+/** Explicit Blacklist IDs provided in user screenshots */
+const EXCLUDED_CHAT_IDS = new Set([
+  "378392372",
+  "-100378392372",
+  "3886546063",
+  "-1003886546063",
+]);
+
+const EXCLUDED_USERNAMES = new Set([
+  "clashgramclient",
+  "clashgramchat",
+  "clashgram",
+]);
+
+const EXCLUDED_TITLES = [
+  "clash{chat}",
+  "clash projects !!",
+  "clash projects",
+  "clashchat",
+];
+
 async function verifyDriveGroup(
   client: TelegramClient,
   config: DriveConfig
 ): Promise<DriveConfig | null> {
   if (!config || !config.chatId) return null;
+  const bareIdStr = String(getBareChannelId(config.chatId));
   const markedIdStr = getMarkedChannelId(config.chatId);
+
+  if (EXCLUDED_CHAT_IDS.has(bareIdStr) || EXCLUDED_CHAT_IDS.has(markedIdStr)) {
+    console.warn(`[radar] Explicitly blacklisted chat ID ${config.chatId}. Invalidating cache.`);
+    return null;
+  }
+
   const markedIdNum = Number(markedIdStr);
 
   try {
@@ -78,6 +106,12 @@ async function verifyDriveGroup(
     if (fullChat) {
       const bio = fullChat.bio || "";
       const titleLower = (fullChat.title || config.chatTitle || "").toLowerCase();
+      const usernameLower = (fullChat.username || "").toLowerCase();
+
+      if (EXCLUDED_USERNAMES.has(usernameLower) || EXCLUDED_TITLES.some((t) => titleLower.includes(t))) {
+        console.warn(`[radar] Cached chat "${titleLower}" (@${usernameLower}) is blacklisted. Invalidating cache.`);
+        return null;
+      }
 
       // Skip broadcast channels that lack signature and drive keywords
       if (fullChat.isBroadcast && !fullChat.isForum && !fullChat.isMegagroup) {
@@ -88,7 +122,7 @@ async function verifyDriveGroup(
       }
 
       // Check title validity or signature
-      const validTitleKeywords = ["clash drive", "tg cloud drive", "clashdrive", "tg cloud", "clashchat", "drive", "cloud", "vault"];
+      const validTitleKeywords = ["clash drive", "tg cloud drive", "clashdrive", "tg cloud", "drive", "cloud", "vault"];
       const isTitleValid = validTitleKeywords.some((kw) => titleLower.includes(kw));
 
       if (!isTitleValid && !bio.includes(DRIVE_SIGNATURE)) {
@@ -192,10 +226,18 @@ export async function scanForDriveGroup(
     try {
       const parsed = JSON.parse(cached) as DriveConfig;
       if (parsed && parsed.chatId) {
-        const verified = await verifyDriveGroup(client, parsed);
-        if (verified) {
-          localStorage.setItem(userDriveKey, JSON.stringify(verified));
-          return verified;
+        const bareIdStr = String(getBareChannelId(parsed.chatId));
+        const markedIdStr = getMarkedChannelId(parsed.chatId);
+        if (EXCLUDED_CHAT_IDS.has(bareIdStr) || EXCLUDED_CHAT_IDS.has(markedIdStr)) {
+          console.warn("[radar] Blacklisted cached drive found. Removing from localStorage.");
+          localStorage.removeItem(userDriveKey);
+          localStorage.removeItem(LS_DRIVE);
+        } else {
+          const verified = await verifyDriveGroup(client, parsed);
+          if (verified) {
+            localStorage.setItem(userDriveKey, JSON.stringify(verified));
+            return verified;
+          }
         }
       }
     } catch {
@@ -222,12 +264,31 @@ export async function scanForDriveGroup(
   }
 
   // --- Step 3: Filter candidates (title keywords OR forum supergroups) ---
-  const TITLE_KEYWORDS = ["clashchat", "clash chat", "clash drive", "tg cloud drive", "clashdrive", "tg cloud", "drive", "clash", "cloud", "storage", "vault"];
+  const TITLE_KEYWORDS = ["clash drive", "tg cloud drive", "clashdrive", "tg cloud", "drive", "cloud", "storage", "vault"];
   const titleCandidates: any[] = [];
 
   for (const dialog of dialogs) {
     const chat = (dialog as any).chat || (dialog as any).peer;
     if (!chat) continue;
+
+    const bareIdStr = String(getBareChannelId(chat.id));
+    const markedIdStr = getMarkedChannelId(chat.id);
+    if (EXCLUDED_CHAT_IDS.has(bareIdStr) || EXCLUDED_CHAT_IDS.has(markedIdStr)) {
+      console.log(`[radar] Blacklisted chat ID ${chat.id} skipped.`);
+      continue;
+    }
+
+    const usernameLower = (chat.username || chat.raw?.username || "").toLowerCase();
+    if (EXCLUDED_USERNAMES.has(usernameLower)) {
+      console.log(`[radar] Blacklisted username @${usernameLower} skipped.`);
+      continue;
+    }
+
+    const titleLower = (chat.title || "").toLowerCase();
+    if (EXCLUDED_TITLES.some((t) => titleLower.includes(t))) {
+      console.log(`[radar] Blacklisted title "${chat.title}" skipped.`);
+      continue;
+    }
 
     // Skip private 1-on-1 user chats
     if (chat.chatType === "user" || chat.type === "user") continue;
@@ -239,10 +300,9 @@ export async function scanForDriveGroup(
       continue;
     }
 
-    const titleLower = (chat.title || "").toLowerCase();
     // Exclude update / announcement channel names unless exact match
     if (titleLower.includes("clashgram") || titleLower.includes("update channel")) {
-      if (!titleLower.includes("drive") && !titleLower.includes("chat")) continue;
+      if (!titleLower.includes("drive")) continue;
     }
 
     const isTitleMatch = TITLE_KEYWORDS.some((kw) => titleLower.includes(kw));
