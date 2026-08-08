@@ -65,26 +65,13 @@ async function stampDriveSignature(
   }
 }
 
-/** Explicit Blacklist IDs provided in user screenshots */
+/** Explicit Blacklist numeric IDs provided in user screenshots */
 const EXCLUDED_CHAT_IDS = new Set([
   "378392372",
   "-100378392372",
   "3886546063",
   "-1003886546063",
 ]);
-
-const EXCLUDED_USERNAMES = new Set([
-  "clashgramclient",
-  "clashgramchat",
-  "clashgram",
-]);
-
-const EXCLUDED_TITLES = [
-  "clash{chat}",
-  "clash projects !!",
-  "clash projects",
-  "clashchat",
-];
 
 async function verifyDriveGroup(
   client: TelegramClient,
@@ -106,12 +93,6 @@ async function verifyDriveGroup(
     if (fullChat) {
       const bio = fullChat.bio || "";
       const titleLower = (fullChat.title || config.chatTitle || "").toLowerCase();
-      const usernameLower = (fullChat.username || "").toLowerCase();
-
-      if (EXCLUDED_USERNAMES.has(usernameLower) || EXCLUDED_TITLES.some((t) => titleLower.includes(t))) {
-        console.warn(`[radar] Cached chat "${titleLower}" (@${usernameLower}) is blacklisted. Invalidating cache.`);
-        return null;
-      }
 
       // Skip broadcast channels that lack signature and drive keywords
       if (fullChat.isBroadcast && !fullChat.isForum && !fullChat.isMegagroup) {
@@ -278,17 +259,7 @@ export async function scanForDriveGroup(
       continue;
     }
 
-    const usernameLower = (chat.username || chat.raw?.username || "").toLowerCase();
-    if (EXCLUDED_USERNAMES.has(usernameLower)) {
-      console.log(`[radar] Blacklisted username @${usernameLower} skipped.`);
-      continue;
-    }
-
     const titleLower = (chat.title || "").toLowerCase();
-    if (EXCLUDED_TITLES.some((t) => titleLower.includes(t))) {
-      console.log(`[radar] Blacklisted title "${chat.title}" skipped.`);
-      continue;
-    }
 
     // Skip private 1-on-1 user chats
     if (chat.chatType === "user" || chat.type === "user") continue;
@@ -440,6 +411,11 @@ export async function scanForDriveGroup(
       let score = 0;
       const titleLower = (chat.title || "").toLowerCase();
 
+      // Absolute certainty bonus for #TgCloudDrive_v1 signature (+1,000,000 pts)
+      if (hasSignature) {
+        score += 1000000;
+      }
+
       if (titleLower === "clash drive" || titleLower === "tg cloud drive") {
         score += 10000;
       } else if (titleLower.includes("clash drive") || titleLower.includes("tg cloud drive")) {
@@ -450,7 +426,6 @@ export async function scanForDriveGroup(
         score += 500;
       }
 
-      if (hasSignature) score += 10000;
       if (manifestCount > 0) score += 5000 + (manifestCount * 500);
       if (topicCount > 0) score += 2000 + (topicCount * 100);
 
