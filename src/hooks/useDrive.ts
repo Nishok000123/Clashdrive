@@ -33,6 +33,17 @@ export function useDrive() {
       await ensureDriveForumEnabled(client, config);
       let folders = await getTopics(client, config);
 
+      // Always ensure General folder (ID 1) exists for main supergroup chat files
+      if (!folders.some((f) => f.id === 1 || f.title.toLowerCase() === "general")) {
+        folders.unshift({
+          id: 1,
+          title: "General",
+          iconColor: 0x6c63ff,
+          date: Math.floor(Date.now() / 1000),
+          messageCount: 0,
+        });
+      }
+
       const defaultTitles = ["Videos", "Audio", "Photos", "Documents", "Favourite"];
       for (const title of defaultTitles) {
         if (!folders.some((f) => f.title.toLowerCase() === title.toLowerCase())) {
@@ -40,6 +51,17 @@ export function useDrive() {
           const topic = await createTopic(client, config, title);
           if (topic) {
             folders.push(topic);
+          } else {
+            const virtualId = defaultTitles.indexOf(title) + 2;
+            if (!folders.some((f) => f.id === virtualId)) {
+              folders.push({
+                id: virtualId,
+                title,
+                iconColor: 0x6c63ff,
+                date: Math.floor(Date.now() / 1000),
+                messageCount: 0,
+              });
+            }
           }
         }
       }
