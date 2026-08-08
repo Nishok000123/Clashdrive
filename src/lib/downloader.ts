@@ -129,15 +129,14 @@ async function getReplyMessages(
     if (
       added === 0 ||
       !Number.isFinite(oldestId) ||
-      oldestId <= 1 ||
       (offsetId !== 0 && oldestId >= offsetId)
     ) {
-      break;
+      // A non-empty page that does not advance is not a valid end cursor.
+      // Treat it as incomplete so the complete-history recovery path runs
+      // instead of presenting a partial folder as fully indexed.
+      throw new Error(`Reply pagination stopped before completion for topic ${topicId}`);
     }
     offsetId = oldestId;
-
-    const total = typeof result?.count === "number" ? result.count : undefined;
-    if (total !== undefined && messagesById.size >= total) break;
   }
 
   return [...messagesById.values()];
@@ -149,14 +148,25 @@ async function getTopicMessagesFromHistory(
   topicId: number
 ): Promise<any[]> {
   const messagesById = new Map<number, any>();
-  let offset: { id: number; date: number } | undefined;
+  let offsetId = 0;
+  const limit = 100;
 
   for (;;) {
-    let page: any;
+    let result: any;
     let attempts = 0;
     while (attempts < 3) {
       try {
-        page = await client.getHistory(peer, { limit: 100, offset });
+        result = await client.call({
+          _: "messages.getHistory",
+          peer,
+          offsetId,
+          offsetDate: 0,
+          addOffset: 0,
+          limit,
+          maxId: 0,
+          minId: 0,
+          hash: Long.ZERO,
+        });
         break;
       } catch (error) {
         const wait = getFloodWaitSeconds(error);
@@ -165,19 +175,24 @@ async function getTopicMessagesFromHistory(
         await new Promise((resolve) => setTimeout(resolve, wait * 1000));
       }
     }
+    const page = result?.messages ?? [];
     if (page.length === 0) break;
 
+    let oldestId = Number.POSITIVE_INFINITY;
+    let added = 0;
     for (const message of page) {
-      if (!message?.id || !isMessageInTopic(message, topicId) || messagesById.has(message.id)) continue;
-      messagesById.set(message.id, message);
+      if (!message?.id) continue;
+      oldestId = Math.min(oldestId, message.id);
+      if (isMessageInTopic(message, topicId) && !messagesById.has(message.id)) {
+        messagesById.set(message.id, message);
+      }
+      added++;
     }
 
-    const next = page.next as { id: number; date: number } | undefined;
-    if (!next || !next.id || (offset && next.id >= offset.id)) break;
-    offset = next;
-
-    // A page can legitimately contain no messages from this topic, so only
-    // the server's next cursor determines completion.
+    if (!added || !Number.isFinite(oldestId) || (offsetId !== 0 && oldestId >= offsetId)) {
+      throw new Error(`History pagination stopped before completion for topic ${topicId}`);
+    }
+    offsetId = oldestId;
   }
 
   return [...messagesById.values()];

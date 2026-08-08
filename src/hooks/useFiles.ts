@@ -596,14 +596,23 @@ export function useFiles() {
 
       let count = 0;
       for (const folder of folders) {
-        try {
-          if (!fileCache.current.has(folder.id)) {
+        let attempts = 0;
+        while (!fileCache.current.has(folder.id)) {
+          try {
             await ensureConnected();
             const result = await listFilesInTopic(client, config, folder.id);
             fileCache.current.set(folder.id, result);
+          } catch (err) {
+            attempts++;
+            // Never mark a failed folder as indexed. Telegram may return a
+            // temporary RPC/network error after hours of large-drive scans.
+            const retryMs = Math.min(60_000, 1_000 * 2 ** Math.min(attempts, 6));
+            console.error(
+              `Failed to index folder ${folder.title}; retrying in ${Math.ceil(retryMs / 1000)}s (attempt ${attempts}).`,
+              err
+            );
+            await new Promise((resolve) => setTimeout(resolve, retryMs));
           }
-        } catch (err) {
-          console.error(`Failed to index folder ${folder.title}:`, err);
         }
         count++;
         setIndexingProgress({ current: count, total: folders.length });
