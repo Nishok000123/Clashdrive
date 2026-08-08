@@ -357,22 +357,24 @@ export async function scanForDriveGroup(
         }
       }
 
-      // Calculate composite score
+      // Calculate composite score with multi-parameter weighting
       let score = 0;
       const titleLower = (chat.title || "").toLowerCase();
-      if (titleLower === "tg cloud drive" || titleLower === "clash drive") {
-        score += 5000;
+      const titleClean = titleLower.replace(/[^a-z0-9]/g, "");
+
+      if (titleClean === "tgclouddrive" || titleClean === "clashdrive") {
+        score += 10000;
       } else if (titleLower.includes("tg cloud drive") || titleLower.includes("clash drive")) {
+        score += 6000;
+      } else if (titleLower.includes("tg cloud") || titleLower.includes("clashdrive") || titleLower.includes("clashchat")) {
         score += 3000;
-      } else if (titleLower.includes("tg cloud") || titleLower.includes("clashdrive")) {
-        score += 1500;
       } else if (titleLower.includes("drive") || titleLower.includes("cloud") || titleLower.includes("vault") || titleLower.includes("clash")) {
-        score += 300;
+        score += 500;
       }
 
-      if (hasSignature) score += 5000;
-      if (manifestCount > 0) score += 3000 + (manifestCount * 200);
-      if (topicCount > 0) score += 1000 + (topicCount * 50);
+      if (hasSignature) score += 10000;
+      if (manifestCount > 0) score += 5000 + (manifestCount * 500);
+      if (topicCount > 0) score += 2000 + (topicCount * 100);
 
       const markedId = getMarkedChannelId(chat.id);
       const bareId = getBareChannelId(chat.id);
