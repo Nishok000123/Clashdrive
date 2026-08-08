@@ -3,6 +3,7 @@ import type { TelegramClient } from "@mtcute/web";
 import { scanForDriveGroup, createDriveGroup, ensureDriveForumEnabled } from "../lib/radar";
 import { getTopics, createTopic, deleteTopic, renameTopic } from "../lib/topics";
 import { ensureConnected } from "../lib/client";
+import { LS_DRIVE } from "../config/telegram";
 import type { DriveConfig, TopicFolder } from "../types";
 
 export function useDrive() {
@@ -159,6 +160,16 @@ export function useDrive() {
     setSyncing(false);
     setSyncStatus("");
     topicsCache.current.clear();
+    try {
+      localStorage.removeItem(LS_DRIVE);
+      Object.keys(localStorage).forEach((key) => {
+        if (key.startsWith(`${LS_DRIVE}_`)) {
+          localStorage.removeItem(key);
+        }
+      });
+    } catch {
+      // ignore storage errors
+    }
   }, []);
 
   return {

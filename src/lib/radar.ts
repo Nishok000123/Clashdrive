@@ -74,16 +74,35 @@ async function verifyDriveGroup(
   const markedIdNum = Number(markedIdStr);
 
   try {
-    const fullChat = await client.getFullChat(markedIdNum);
+    const fullChat: any = await client.getFullChat(markedIdNum);
     if (fullChat) {
       const bio = fullChat.bio || "";
+      const titleLower = (fullChat.title || config.chatTitle || "").toLowerCase();
+
+      // Skip broadcast channels that lack signature and drive keywords
+      if (fullChat.isBroadcast && !fullChat.isForum && !fullChat.isMegagroup) {
+        if (!titleLower.includes("drive") && !bio.includes(DRIVE_SIGNATURE)) {
+          console.warn("[radar] Cached chat is a 1-way broadcast channel. Invalidating cache.");
+          return null;
+        }
+      }
+
+      // Check title validity or signature
+      const validTitleKeywords = ["clash drive", "tg cloud drive", "clashdrive", "tg cloud", "clashchat", "drive", "cloud", "vault"];
+      const isTitleValid = validTitleKeywords.some((kw) => titleLower.includes(kw));
+
+      if (!isTitleValid && !bio.includes(DRIVE_SIGNATURE)) {
+        console.warn(`[radar] Cached chat "${titleLower}" lacks valid title and signature. Invalidating cache.`);
+        return null;
+      }
+
       if (!bio.includes(DRIVE_SIGNATURE)) {
         await stampDriveSignature(client, config.chatId, config.accessHash, bio);
       }
-      return refreshDriveAccessHash(client, { ...config, chatId: markedIdStr });
+      return refreshDriveAccessHash(client, { ...config, chatId: markedIdStr, chatTitle: fullChat.title || config.chatTitle });
     }
-  } catch {
-    // Fall back to direct raw call
+  } catch (err) {
+    console.warn("verifyDriveGroup getFullChat failed:", err);
   }
 
   try {
@@ -105,7 +124,7 @@ async function verifyDriveGroup(
       return refreshDriveAccessHash(client, { ...config, chatId: markedIdStr });
     }
   } catch (err) {
-    console.warn("verifyDriveGroup failed:", err);
+    console.warn("verifyDriveGroup fallback failed:", err);
   }
 
   return null;
