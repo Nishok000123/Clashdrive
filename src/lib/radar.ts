@@ -207,19 +207,18 @@ export async function scanForDriveGroup(
   const titleCandidates: any[] = [];
 
   for (const dialog of dialogs) {
-    // @mtcute Dialog has .peer, NOT .chat
-    const peer = (dialog as any).peer || (dialog as any).chat;
-    if (!peer) continue;
+    const chat = (dialog as any).chat || (dialog as any).peer;
+    if (!chat) continue;
 
-    // Skip private 1-on-1 user chats (User.type === "user")
-    if (peer.type === "user") continue;
+    // Skip private 1-on-1 user chats
+    if (chat.chatType === "user" || chat.type === "user") continue;
 
-    const titleLower = (peer.title || "").toLowerCase();
+    const titleLower = (chat.title || "").toLowerCase();
     const isTitleMatch = TITLE_KEYWORDS.some((kw) => titleLower.includes(kw));
-    const isForum = Boolean(peer.isForum || (peer.raw && "forum" in peer.raw && peer.raw.forum));
+    const isForum = Boolean(chat.isForum || (chat.raw && "forum" in chat.raw && chat.raw.forum));
 
     if (isTitleMatch || isForum) {
-      titleCandidates.push(peer);
+      titleCandidates.push(chat);
     }
   }
 
@@ -237,6 +236,8 @@ export async function scanForDriveGroup(
 
   for (const chat of titleCandidates) {
     try {
+      const markedIdNum = Number(getMarkedChannelId(chat.id));
+      await client.resolvePeer(markedIdNum).catch(() => null);
       // 4a. Check description for signature
       let about = "";
       try {
