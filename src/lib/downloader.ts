@@ -82,7 +82,8 @@ function isMessageInTopic(message: any, topicId: number): boolean {
 async function getReplyMessages(
   client: TelegramClient,
   peer: any,
-  topicId: number
+  topicId: number,
+  minId = 0
 ): Promise<any[]> {
   const messagesById = new Map<number, any>();
   let offsetId = 0;
@@ -102,7 +103,7 @@ async function getReplyMessages(
           addOffset: 0,
           limit,
           maxId: 0,
-          minId: 0,
+          minId,
           hash: Long.ZERO,
         });
         break;
@@ -145,7 +146,8 @@ async function getReplyMessages(
 async function getTopicMessagesFromHistory(
   client: TelegramClient,
   peer: any,
-  topicId: number
+  topicId: number,
+  minId = 0
 ): Promise<any[]> {
   const messagesById = new Map<number, any>();
   let offsetId = 0;
@@ -164,7 +166,7 @@ async function getTopicMessagesFromHistory(
           addOffset: 0,
           limit,
           maxId: 0,
-          minId: 0,
+          minId,
           hash: Long.ZERO,
         });
         break;
@@ -1202,7 +1204,8 @@ async function getManifestMessageMap(
 export async function listFilesInTopic(
   client: TelegramClient,
   config: DriveConfig,
-  topicId: number
+  topicId: number,
+  existingFiles?: DriveFile[] | null
 ): Promise<DriveFile[]> {
   try {
     // Resolving the peer refreshes an absent/stale access hash from mtcute's
@@ -1212,9 +1215,30 @@ export async function listFilesInTopic(
     const messageById = new Map<number, any>();
     const isGeneralTopic = topicId === 1 || topicId <= 0;
 
+    let minId = 0;
+    const existingFileMap = new Map<number, DriveFile>();
+    if (existingFiles && existingFiles.length > 0) {
+      let maxId = 0;
+      for (const f of existingFiles) {
+        existingFileMap.set(f.id, f);
+        if (f.id > maxId) maxId = f.id;
+        if (f.manifest?.chunks) {
+          for (const cid of f.manifest.chunks) {
+            if (cid > maxId) maxId = cid;
+          }
+        }
+        if (typeof f.manifest?.thumb === "number" && f.manifest.thumb > maxId) {
+          maxId = f.manifest.thumb;
+        }
+      }
+      if (maxId > 0) {
+        minId = maxId;
+      }
+    }
+
     if (!isGeneralTopic) {
       try {
-        for (const message of await getReplyMessages(client, peer, topicId)) {
+        for (const message of await getReplyMessages(client, peer, topicId, minId)) {
           messageById.set(message.id, message);
         }
       } catch (error) {
@@ -1225,6 +1249,11 @@ export async function listFilesInTopic(
         if (getFloodWaitSeconds(error) !== null) throw error;
         console.warn(`[listFilesInTopic] getReplies failed for topic ${topicId}; scanning history.`, error);
       }
+    }
+
+    // Fast path: if incremental sync returned no new messages, return cached files immediately!
+    if (minId > 0 && messageById.size === 0 && !isGeneralTopic) {
+      return Array.from(existingFileMap.values());
     }
 
     const getMessageText = (m: any): string => {
@@ -1340,11 +1369,7 @@ export async function listFilesInTopic(
         }
       }
 
-      // Recovery path for interrupted legacy uploads.  A failed final
-      // manifest used to leave valid `.part0000` documents hidden forever,
-      // which made a topic appear empty despite all file bytes being present.
-      // Only expose complete, contiguous groups so an incomplete upload never
-      // becomes a corrupt downloadable file.
+      // Recovery path for interrupted legacy uploads.
       const orphanPartGroups = new Map<string, {
         partIndex: number;
         message: any;
@@ -1399,19 +1424,27 @@ export async function listFilesInTopic(
 
     let files = await extractFilesFromMap();
 
-    // Fallback: scan every history page and keep only this topic. This covers
-    // old topics and also General, which has no reply-thread endpoint.
-    if (files.length === 0) {
-      for (const message of await getTopicMessagesFromHistory(client, peer, topicId)) {
+    // Fallback: scan every history page and keep only this topic.
+    if (files.length === 0 && messageById.size === 0) {
+      if (minId > 0 && existingFileMap.size > 0) {
+        return Array.from(existingFileMap.values());
+      }
+      for (const message of await getTopicMessagesFromHistory(client, peer, topicId, minId)) {
         messageById.set(message.id, message);
       }
 
       files = await extractFilesFromMap();
     }
+
+    if (minId > 0 && existingFileMap.size > 0) {
+      for (const f of files) {
+        existingFileMap.set(f.id, f);
+      }
+      return Array.from(existingFileMap.values());
+    }
+
     return files;
   } catch (err) {
-    // Do not turn a transport/permission failure into a cached "0 files".
-    // Callers can retry the folder after the connection recovers.
     console.error("Failed to list files in topic:", err);
     throw err;
   }

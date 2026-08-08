@@ -73,7 +73,8 @@ export function useFiles() {
           }
         }
         await ensureConnected();
-        const result = await listFilesInTopic(client, config, topicId);
+        const existing = force ? null : fileCache.current.get(topicId);
+        const result = await listFilesInTopic(client, config, topicId, existing);
         fileCache.current.set(topicId, result);
         void saveTopicFilesToDB(topicId, result);
         setFiles(result);
@@ -624,45 +625,52 @@ export function useFiles() {
       let completed = 0;
       setIndexingProgress({ current: completed, total: folders.length });
 
-      while (pending.length > 0) {
-        const folder = pending.shift()!;
-        try {
-          await ensureConnected();
-          const result = await listFilesInTopic(client, config, folder.id);
-          fileCache.current.set(folder.id, result);
-          void saveTopicFilesToDB(folder.id, result);
-          if (activeTopicIdRef.current === folder.id) {
-            setFiles(result);
-          }
-          completed++;
-          setIndexingProgress({ current: completed, total: folders.length });
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (err) {
-          const attempt = (attempts.get(folder.id) || 0) + 1;
-          attempts.set(folder.id, attempt);
-          if (attempt <= 5) {
-            pending.push(folder);
-          } else {
-            console.error(`Skipping folder ${folder.title} after 5 failed attempts:`, err);
+      const CONCURRENCY = 3;
+      const worker = async () => {
+        while (pending.length > 0) {
+          const folder = pending.shift();
+          if (!folder) break;
+          try {
+            await ensureConnected();
+            const existing = fileCache.current.get(folder.id);
+            const result = await listFilesInTopic(client, config, folder.id, existing);
+            fileCache.current.set(folder.id, result);
+            void saveTopicFilesToDB(folder.id, result);
+            if (activeTopicIdRef.current === folder.id) {
+              setFiles(result);
+            }
             completed++;
             setIndexingProgress({ current: completed, total: folders.length });
-            continue;
-          }
+          } catch (err) {
+            const attempt = (attempts.get(folder.id) || 0) + 1;
+            attempts.set(folder.id, attempt);
+            if (attempt <= 5) {
+              pending.push(folder);
+            } else {
+              console.error(`Skipping folder ${folder.title} after 5 failed attempts:`, err);
+              completed++;
+              setIndexingProgress({ current: completed, total: folders.length });
+              continue;
+            }
 
-          const errorText = err instanceof Error ? err.message : String(err);
-          const floodMatch = errorText.match(/FLOOD_WAIT_(\d+)/);
-          // Telegram provides the precise cooldown. Retrying early creates a
-          // new flood wait and prevents the folder from ever finishing.
-          const retryMs = floodMatch
-            ? (Number(floodMatch[1]) + 1) * 1_000
-            : Math.min(30_000, 1_000 * 2 ** Math.min(attempt, 5));
-          console.error(
-            `Failed to index folder ${folder.title}; retrying in ${Math.ceil(retryMs / 1000)}s (attempt ${attempt}).`,
-            err
-          );
-          await new Promise((resolve) => setTimeout(resolve, retryMs));
+            const errorText = err instanceof Error ? err.message : String(err);
+            const floodMatch = errorText.match(/FLOOD_WAIT_(\d+)/);
+            // Telegram provides the precise cooldown. Retrying early creates a
+            // new flood wait and prevents the folder from ever finishing.
+            const retryMs = floodMatch
+              ? (Number(floodMatch[1]) + 1) * 1_000
+              : Math.min(30_000, 1_000 * 2 ** Math.min(attempt, 5));
+            console.error(
+              `Failed to index folder ${folder.title}; retrying in ${Math.ceil(retryMs / 1000)}s (attempt ${attempt}).`,
+              err
+            );
+            await new Promise((resolve) => setTimeout(resolve, retryMs));
+          }
         }
-      }
+      };
+
+      const workerCount = Math.min(CONCURRENCY, folders.length);
+      await Promise.all(Array.from({ length: workerCount }, () => worker()));
       setIndexing(false);
       indexingRef.current = false;
     },
