@@ -252,6 +252,10 @@ export function PreviewModal({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [seekTooltip, setSeekTooltip] = useState<{ x: number; time: string } | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
+  const ogvPlayerRef = useRef<any>(null);
+  const ogvContainerRef = useRef<HTMLDivElement | null>(null);
+  const [useOgv, setUseOgv] = useState(false);
+  const [ogvLoading, setOgvLoading] = useState(false);
 
   // ─── Audio state ───
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -534,17 +538,22 @@ export function PreviewModal({
   }, []);
 
   /* ═══════════════════════════════════════════════════════
-     VIDEO: CUSTOM PLAYER
+     VIDEO: CUSTOM PLAYER (NATIVE + OGV / MKV DECODER)
      ═══════════════════════════════════════════════════════ */
 
-  const toggleVideoPlay = useCallback(() => {
-    if (!videoRef.current) return;
-    if (videoRef.current.paused) {
-      videoRef.current.play().catch(console.error);
-    } else {
-      videoRef.current.pause();
-    }
+  const getActiveVideo = useCallback(() => {
+    return ogvPlayerRef.current || videoRef.current;
   }, []);
+
+  const toggleVideoPlay = useCallback(() => {
+    const v = getActiveVideo();
+    if (!v) return;
+    if (v.paused) {
+      v.play()?.catch?.(console.error);
+    } else {
+      v.pause();
+    }
+  }, [getActiveVideo]);
 
   const toggleFullscreen = useCallback(() => {
     const container = videoContainerRef.current;
@@ -557,12 +566,12 @@ export function PreviewModal({
   }, []);
 
   const togglePiP = useCallback(async () => {
-    const video = videoRef.current;
+    const video = ogvPlayerRef.current || videoRef.current;
     if (!video) return;
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
-      } else {
+      } else if ("requestPictureInPicture" in video) {
         await video.requestPictureInPicture();
       }
     } catch (err) {
@@ -570,18 +579,20 @@ export function PreviewModal({
     }
   }, []);
 
-  // Sync volume to video element
+  // Sync volume to active video element (native or OGV)
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.volume = videoVolume;
-      videoRef.current.muted = videoMuted;
+    const v = getActiveVideo();
+    if (v) {
+      v.volume = videoVolume;
+      v.muted = videoMuted;
     }
-  }, [videoVolume, videoMuted]);
+  }, [videoVolume, videoMuted, getActiveVideo]);
 
   // Sync playback speed
   useEffect(() => {
-    if (videoRef.current) videoRef.current.playbackRate = playbackSpeed;
-  }, [playbackSpeed]);
+    const v = getActiveVideo();
+    if (v) v.playbackRate = playbackSpeed;
+  }, [playbackSpeed, getActiveVideo]);
 
   // Sync audio volume
   useEffect(() => {
@@ -598,11 +609,131 @@ export function PreviewModal({
     setControlsVisible(true);
     if (controlsTimer.current) clearTimeout(controlsTimer.current);
     controlsTimer.current = setTimeout(() => {
-      if (videoRef.current && !videoRef.current.paused) {
+      const v = getActiveVideo();
+      if (v && !v.paused) {
         setControlsVisible(false);
       }
     }, 3000);
-  }, []);
+  }, [getActiveVideo]);
+
+  // OGV / MKV player dynamic initialization effect
+  useEffect(() => {
+    if (!isVideo || !url) return;
+
+    const isMkv = ext === "mkv" || mimeType.includes("matroska");
+    if (!isMkv && !useOgv) return;
+
+    let cancelled = false;
+    setOgvLoading(true);
+    setBuffering(true);
+
+    loadScript([
+      "https://cdn.jsdelivr.net/npm/ogv@1.9.0/dist/ogv.js",
+      "https://unpkg.com/ogv@1.9.0/dist/ogv.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/ogv/1.9.0/ogv.js"
+    ], "OGVPlayer")
+      .then(() => {
+        if (cancelled) return;
+        const OGVPlayer = (window as any).OGVPlayer;
+        if (!OGVPlayer) throw new Error("OGVPlayer library did not load");
+
+        if (ogvPlayerRef.current) {
+          try {
+            ogvPlayerRef.current.pause();
+          } catch {}
+          ogvPlayerRef.current = null;
+        }
+
+        const container = ogvContainerRef.current;
+        if (!container) return;
+        container.innerHTML = "";
+
+        const player = new OGVPlayer({
+          debug: false,
+          memoryLimit: 128 * 1024 * 1024,
+        });
+
+        player.style.width = "100%";
+        player.style.height = "100%";
+        player.style.objectFit = "contain";
+        container.appendChild(player);
+
+        ogvPlayerRef.current = player;
+
+        player.addEventListener("loadedmetadata", () => {
+          if (cancelled) return;
+          setVideoDuration(player.duration || 0);
+          setBuffering(false);
+          setOgvLoading(false);
+        });
+
+        player.addEventListener("timeupdate", () => {
+          if (cancelled) return;
+          setVideoTime(player.currentTime || 0);
+          if (player.buffered && player.buffered.length > 0) {
+            setVideoBuffered(player.buffered.end(player.buffered.length - 1));
+          }
+        });
+
+        player.addEventListener("playing", () => {
+          if (cancelled) return;
+          setVideoPlaying(true);
+          setBuffering(false);
+          setOgvLoading(false);
+          resetControlsTimer();
+        });
+
+        player.addEventListener("pause", () => {
+          if (cancelled) return;
+          setVideoPlaying(false);
+          setControlsVisible(true);
+        });
+
+        player.addEventListener("ended", () => {
+          if (cancelled) return;
+          setVideoPlaying(false);
+          setControlsVisible(true);
+        });
+
+        player.addEventListener("seeking", () => {
+          if (cancelled) return;
+          setBuffering(true);
+        });
+
+        player.addEventListener("seeked", () => {
+          if (cancelled) return;
+          setBuffering(false);
+        });
+
+        player.addEventListener("error", (err: any) => {
+          if (cancelled) return;
+          console.warn("OGV Player error:", err);
+          setBuffering(false);
+          setOgvLoading(false);
+          setVideoError(`Cannot render this .${ext.toUpperCase()} file natively. Please download to play.`);
+        });
+
+        player.src = url;
+        player.play().catch(() => {});
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.warn("OGV Player load error:", err);
+        setOgvLoading(false);
+        setBuffering(false);
+        setVideoError(`Failed to load MKV player engine. Please download the file to play.`);
+      });
+
+    return () => {
+      cancelled = true;
+      if (ogvPlayerRef.current) {
+        try {
+          ogvPlayerRef.current.pause();
+        } catch {}
+        ogvPlayerRef.current = null;
+      }
+    };
+  }, [isVideo, url, ext, mimeType, useOgv, resetControlsTimer]);
 
   // Fullscreen change listener
   useEffect(() => {
@@ -622,11 +753,12 @@ export function PreviewModal({
   }, []);
 
   const handleVideoSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!videoRef.current) return;
+    const v = getActiveVideo();
+    if (!v) return;
     const time = parseFloat(e.target.value);
-    videoRef.current.currentTime = time;
+    v.currentTime = time;
     setVideoTime(time);
-  }, []);
+  }, [getActiveVideo]);
 
   const handleSeekTooltip = useCallback((e: React.MouseEvent<HTMLInputElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -1563,6 +1695,8 @@ export function PreviewModal({
                         </button>
                       )}
                     </div>
+                  ) : ext === "mkv" || useOgv ? (
+                    <div ref={ogvContainerRef} className="w-full h-full flex items-center justify-center select-none" />
                   ) : (
                     <>
                       <video
@@ -1583,9 +1717,13 @@ export function PreviewModal({
                         onWaiting={() => setBuffering(true)}
                         onPlaying={() => setBuffering(false)}
                         onError={(e) => {
-                          console.warn("Video element playback error:", e);
-                          setBuffering(false);
-                          setVideoError(`Browser native player cannot render this video codec/container (.${ext.toUpperCase()}). Please download to play.`);
+                          console.warn("Native video element playback error, attempting OGV decoder fallback...", e);
+                          if (!useOgv) {
+                            setUseOgv(true);
+                          } else {
+                            setBuffering(false);
+                            setVideoError(`Browser native player cannot render this video codec/container (.${ext.toUpperCase()}). Please download to play.`);
+                          }
                         }}
                         className="max-w-full max-h-full object-contain"
                       />
