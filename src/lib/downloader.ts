@@ -96,9 +96,7 @@ async function getReplyMessages(
           offsetDate: 0,
           addOffset: 0,
           limit,
-          // offset_id is an inclusive cursor. max_id makes every page after
-          // the first strictly older than the previous boundary message.
-          maxId: offsetId,
+          maxId: 0,
           minId: 0,
           hash: Long.ZERO,
         });
@@ -160,7 +158,7 @@ async function getTopicMessagesFromHistory(
           offsetDate: 0,
           addOffset: 0,
           limit,
-          maxId: offsetId,
+          maxId: 0,
           minId: 0,
           hash: Long.ZERO,
         });
