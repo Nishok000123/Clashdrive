@@ -382,7 +382,12 @@ export async function preFetchMessages(
   config: DriveConfig,
   manifest: ChunkManifest
 ): Promise<void> {
-  const missingIds = manifest.chunks.filter((id) => !messageCache.has(id));
+  // Fetch just the near-playback window. Fetching every message reference of
+  // a large file at open time can queue several requests ahead of its first
+  // media range and delay startup.
+  const missingIds = manifest.chunks
+    .filter((id) => !messageCache.has(id))
+    .slice(0, 12);
   if (missingIds.length > 0) {
     try {
       const peerInput = getPeerInput(config);
@@ -477,7 +482,6 @@ async function triggerBackgroundPrefetch(
     const iter = activeClient.downloadAsIterable(targetLocation, {
       offset: alignedOffset,
       partSize: 512,
-      limit: fetchLimit + (fetchFrom - alignedOffset),
       abortSignal: abortCtrl.signal,
     });
 
@@ -487,7 +491,13 @@ async function triggerBackgroundPrefetch(
       const piece = rawPiece instanceof Uint8Array ? rawPiece : new Uint8Array(rawPiece);
       appendCachedData(fileId, chunkIndex, writeOffset, piece, fileChunkSize);
       writeOffset += piece.length;
-      if (writeOffset >= fetchFrom + fetchLimit) break;
+      if (writeOffset >= fetchFrom + fetchLimit) {
+        // mtcute continues scheduling iterable workers after a consumer
+        // breaks. Abort explicitly so prefetch never consumes an entire
+        // 50–500 MB Telegram document.
+        abortCtrl.abort();
+        break;
+      }
     }
   } catch (err) {
     if ((err as any)?.name !== "AbortError") {
@@ -899,47 +909,56 @@ export async function handleStreamRequest(
 
         const resumeOffset = offsetInChunk + bytesSent;
         const alignedOffset = Math.floor(resumeOffset / PART_ALIGN) * PART_ALIGN;
+        const rangeAbortController = new AbortController();
+        const abortRange = () => rangeAbortController.abort();
+        if (streamAbortController.signal.aborted) abortRange();
+        else streamAbortController.signal.addEventListener("abort", abortRange, { once: true });
 
         const iter = activeClient.downloadAsIterable(targetLocation, {
           offset: alignedOffset,
           partSize: 512,
-          // Do not ask Telegram for the entire 50–500 MB document when the
-          // browser only requested a media range.
-          limit: bytesNeeded + (resumeOffset - alignedOffset),
-          abortSignal: streamAbortController.signal,
+          abortSignal: rangeAbortController.signal,
         });
 
         let downloadPos = alignedOffset;
 
-        for await (const rawPiece of iter) {
-          if (aborted) break;
+        try {
+          for await (const rawPiece of iter) {
+            if (aborted) break;
 
-          const piece = rawPiece instanceof Uint8Array ? rawPiece : new Uint8Array(rawPiece);
+            const piece = rawPiece instanceof Uint8Array ? rawPiece : new Uint8Array(rawPiece);
 
-          appendCachedData(fileId, chunkIndex, downloadPos, piece, fileChunkSize);
+            appendCachedData(fileId, chunkIndex, downloadPos, piece, fileChunkSize);
 
-          const pieceStart = downloadPos;
-          const pieceEnd = downloadPos + piece.length;
-          const sendStart = offsetInChunk + bytesSent;
-          const sendEnd = offsetInChunk + bytesNeeded;
+            const pieceStart = downloadPos;
+            const pieceEnd = downloadPos + piece.length;
+            const sendStart = offsetInChunk + bytesSent;
+            const sendEnd = offsetInChunk + bytesNeeded;
 
-          if (pieceEnd > sendStart && pieceStart < sendEnd) {
-            const sliceFrom = Math.max(0, sendStart - pieceStart);
-            const sliceTo = Math.min(piece.length, sendEnd - pieceStart);
-            const dataToSend = piece.subarray(sliceFrom, sliceTo);
+            if (pieceEnd > sendStart && pieceStart < sendEnd) {
+              const sliceFrom = Math.max(0, sendStart - pieceStart);
+              const sliceTo = Math.min(piece.length, sendEnd - pieceStart);
+              const dataToSend = piece.subarray(sliceFrom, sliceTo);
 
-            if (dataToSend.length > 0) {
-              if (isDsfFile) {
-                processAndSendDsdBytes(new Uint8Array(dataToSend));
-              } else {
-                sendBytesSliced(new Uint8Array(dataToSend));
+              if (dataToSend.length > 0) {
+                if (isDsfFile) {
+                  processAndSendDsdBytes(new Uint8Array(dataToSend));
+                } else {
+                  sendBytesSliced(new Uint8Array(dataToSend));
+                }
+                bytesSent += dataToSend.length;
               }
-              bytesSent += dataToSend.length;
+            }
+
+            downloadPos += piece.length;
+            if (bytesSent >= bytesNeeded) {
+              rangeAbortController.abort();
+              break;
             }
           }
-
-          downloadPos += piece.length;
-          if (bytesSent >= bytesNeeded) break;
+        } finally {
+          streamAbortController.signal.removeEventListener("abort", abortRange);
+          rangeAbortController.abort();
         }
 
         if (bytesSent >= bytesNeeded || aborted) break;
