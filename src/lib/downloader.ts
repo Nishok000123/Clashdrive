@@ -138,6 +138,9 @@ async function getReplyMessages(
       break;
     }
     offsetId = oldestId;
+
+    // Pace MTProto requests to avoid triggering Telegram FLOOD_WAIT
+    await new Promise((resolve) => setTimeout(resolve, 150));
   }
 
   return [...messagesById.values()];
@@ -198,6 +201,9 @@ async function getTopicMessagesFromHistory(
       break;
     }
     offsetId = oldestId;
+
+    // Pace MTProto requests to avoid triggering Telegram FLOOD_WAIT
+    await new Promise((resolve) => setTimeout(resolve, 150));
   }
 
   return [...messagesById.values()];
@@ -748,16 +754,6 @@ export async function handleStreamRequest(
   if (mimeType === "application/octet-stream") {
     mimeType = mimeTypeFromName(file.name);
   }
-
-  port.postMessage({
-    type: "HEADER",
-    status: hasRange ? 206 : 200,
-    start,
-    end,
-    totalSize: isDsfFile ? wavTotalSize : file.size,
-    contentLength,
-    mimeType,
-  });
 
   let aborted = false;
   const streamAbortController = new AbortController();

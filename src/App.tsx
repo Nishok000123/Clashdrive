@@ -621,7 +621,7 @@ export default function App() {
           const streamReady = await ensureStreamWorkerReady();
           if (!isCurrentPreview()) return;
 
-          if (streamReady && navigator.serviceWorker.controller) {
+          if (streamReady || file.size > 100 * MB) {
             preFetchMessages(client, driveConfig, file.manifest).catch((err) => {
               console.warn("Message prefetch failed; stream will fetch on demand:", err);
             });

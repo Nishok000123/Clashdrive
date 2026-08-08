@@ -616,12 +616,9 @@ export function PreviewModal({
     }, 3000);
   }, [getActiveVideo]);
 
-  // OGV / MKV player dynamic initialization effect
+  // OGV player dynamic initialization fallback effect
   useEffect(() => {
-    if (!isVideo || !url) return;
-
-    const isMkv = ext === "mkv" || mimeType.includes("matroska");
-    if (!isMkv && !useOgv) return;
+    if (!isVideo || !url || !useOgv) return;
 
     let cancelled = false;
     setOgvLoading(true);
@@ -1695,7 +1692,7 @@ export function PreviewModal({
                         </button>
                       )}
                     </div>
-                  ) : ext === "mkv" || useOgv ? (
+                  ) : useOgv ? (
                     <div ref={ogvContainerRef} className="w-full h-full flex items-center justify-center select-none" />
                   ) : (
                     <>

@@ -625,7 +625,7 @@ export function useFiles() {
       let completed = 0;
       setIndexingProgress({ current: completed, total: folders.length });
 
-      const CONCURRENCY = 3;
+      const CONCURRENCY = 1;
       const worker = async () => {
         while (pending.length > 0) {
           const folder = pending.shift();
@@ -641,6 +641,7 @@ export function useFiles() {
             }
             completed++;
             setIndexingProgress({ current: completed, total: folders.length });
+            await new Promise((resolve) => setTimeout(resolve, 150));
           } catch (err) {
             const attempt = (attempts.get(folder.id) || 0) + 1;
             attempts.set(folder.id, attempt);
