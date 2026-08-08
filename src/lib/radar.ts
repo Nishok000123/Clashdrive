@@ -203,7 +203,7 @@ export async function scanForDriveGroup(
   }
 
   // --- Step 3: Filter candidates (title keywords OR forum supergroups) ---
-  const TITLE_KEYWORDS = ["drive", "clash", "cloud", "storage", "vault", "tg cloud"];
+  const TITLE_KEYWORDS = ["clash drive", "tg cloud drive", "clashdrive", "tg cloud", "drive", "clash", "cloud", "storage", "vault"];
   const titleCandidates: any[] = [];
 
   for (const dialog of dialogs) {
@@ -213,7 +213,19 @@ export async function scanForDriveGroup(
     // Skip private 1-on-1 user chats
     if (chat.chatType === "user" || chat.type === "user") continue;
 
+    // Skip 1-way broadcast channels (only allow supergroups / megagroups / forum chats)
+    const isMegagroup = Boolean(chat.isMegagroup || chat.megagroup || chat.raw?.megagroup || chat.isForum || chat.raw?.forum);
+    const isChannelType = chat.chatType === "channel" || chat.type === "channel";
+    if (isChannelType && !isMegagroup) {
+      continue;
+    }
+
     const titleLower = (chat.title || "").toLowerCase();
+    // Exclude update / announcement channel names unless exact match
+    if (titleLower.includes("clashgram") || titleLower.includes("update channel")) {
+      if (!titleLower.includes("drive")) continue;
+    }
+
     const isTitleMatch = TITLE_KEYWORDS.some((kw) => titleLower.includes(kw));
     const isForum = Boolean(chat.isForum || (chat.raw && "forum" in chat.raw && chat.raw.forum));
 
@@ -232,6 +244,7 @@ export async function scanForDriveGroup(
     manifestCount: number;
     topicCount: number;
     titleOnly: boolean;
+    score: number;
   }[] = [];
 
   for (const chat of titleCandidates) {
@@ -317,8 +330,6 @@ export async function scanForDriveGroup(
               const text = typeof m.message === "string" ? m.message : typeof m.text === "string" ? m.text : "";
               if (text && (text.includes('"segmented_file"') || parseManifest(text) !== null)) {
                 manifestCount++;
-              } else if (m.media || (m.raw && m.raw.media)) {
-                manifestCount++;
               }
             }
           } catch {
@@ -339,8 +350,6 @@ export async function scanForDriveGroup(
             const text = typeof mAny.message === "string" ? mAny.message : typeof msg.text === "string" ? msg.text : "";
             if (text && (text.includes('"segmented_file"') || parseManifest(text) !== null)) {
               manifestCount++;
-            } else if (mAny.media || (msg.raw && (msg.raw as any).media)) {
-              manifestCount++;
             }
           }
         } catch {
@@ -348,38 +357,46 @@ export async function scanForDriveGroup(
         }
       }
 
-      // Add candidate: with signature/manifests = high priority, title-only = low priority fallback
-      if (hasSignature || manifestCount > 0 || topicCount > 0) {
-        const markedId = getMarkedChannelId(chat.id);
-        const bareId = getBareChannelId(chat.id);
-        const accessHashStr = accessHashString(
-          chat.raw?.accessHash ?? chat.inputPeer?.accessHash ?? chat.accessHash
-        );
-
-        const config: DriveConfig = {
-          chatId: markedId,
-          chatTitle: chat.title || "Clash Drive",
-          accessHash: accessHashStr,
-        };
-
-        scored.push({ config, bareId, hasSignature, manifestCount, topicCount, titleOnly: false });
-        console.log(`[radar] Candidate: "${chat.title}" sig=${hasSignature} topics=${topicCount} manifests=${manifestCount} bareId=${bareId}`);
-      } else {
-        const markedId = getMarkedChannelId(chat.id);
-        const bareId = getBareChannelId(chat.id);
-        const accessHashStr = accessHashString(
-          chat.raw?.accessHash ?? chat.inputPeer?.accessHash ?? chat.accessHash
-        );
-
-        const config: DriveConfig = {
-          chatId: markedId,
-          chatTitle: chat.title || "Clash Drive",
-          accessHash: accessHashStr,
-        };
-
-        scored.push({ config, bareId, hasSignature: false, manifestCount: 0, topicCount: 0, titleOnly: true });
-        console.log(`[radar] Title-only fallback: "${chat.title}" bareId=${bareId}`);
+      // Calculate composite score
+      let score = 0;
+      const titleLower = (chat.title || "").toLowerCase();
+      if (titleLower === "clash drive" || titleLower === "tg cloud drive") {
+        score += 2000;
+      } else if (titleLower.includes("clash drive") || titleLower.includes("tg cloud drive")) {
+        score += 1000;
+      } else if (titleLower.includes("clashdrive") || titleLower.includes("tg cloud")) {
+        score += 500;
+      } else if (titleLower.includes("drive") || titleLower.includes("cloud") || titleLower.includes("vault")) {
+        score += 200;
       }
+
+      if (hasSignature) score += 1000;
+      if (manifestCount > 0) score += (manifestCount * 100);
+      if (topicCount > 0) score += (topicCount * 50);
+
+      const markedId = getMarkedChannelId(chat.id);
+      const bareId = getBareChannelId(chat.id);
+      const accessHashStr = accessHashString(
+        chat.raw?.accessHash ?? chat.inputPeer?.accessHash ?? chat.accessHash
+      );
+
+      const config: DriveConfig = {
+        chatId: markedId,
+        chatTitle: chat.title || "Clash Drive",
+        accessHash: accessHashStr,
+      };
+
+      scored.push({
+        config,
+        bareId,
+        hasSignature,
+        manifestCount,
+        topicCount,
+        titleOnly: !hasSignature && manifestCount === 0 && topicCount === 0,
+        score,
+      });
+
+      console.log(`[radar] Candidate: "${chat.title}" score=${score} sig=${hasSignature} topics=${topicCount} manifests=${manifestCount}`);
     } catch (err) {
       console.warn("[radar] Error checking candidate:", chat.title, err);
       continue;
@@ -387,20 +404,13 @@ export async function scanForDriveGroup(
   }
 
   if (scored.length > 0) {
-    scored.sort((a, b) => {
-      if (a.titleOnly !== b.titleOnly) return a.titleOnly ? 1 : -1;
-      const aData = (a.topicCount > 0 ? a.topicCount : 0) + (a.manifestCount * 5);
-      const bData = (b.topicCount > 0 ? b.topicCount : 0) + (b.manifestCount * 5);
-      if (bData !== aData) return bData - aData;
-      if (b.hasSignature !== a.hasSignature) return (b.hasSignature ? 1 : 0) - (a.hasSignature ? 1 : 0);
-      return a.bareId - b.bareId;
-    });
+    scored.sort((a, b) => b.score - a.score || a.bareId - b.bareId);
 
     const bestCandidate = scored[0];
     let best = bestCandidate.config;
     best = await refreshDriveAccessHash(client, best);
     await ensureDriveForumEnabled(client, best);
-    console.log(`[radar] Selected drive: "${best.chatTitle}" (${best.chatId}) with ${bestCandidate.topicCount} topics`);
+    console.log(`[radar] Selected drive: "${best.chatTitle}" (${best.chatId}) with score ${bestCandidate.score}`);
     if (!bestCandidate.hasSignature) {
       await stampDriveSignature(client, best.chatId, best.accessHash);
     }
